@@ -1,0 +1,25 @@
+# Node / TypeScript
+node_modules/
+dist/
+*.tsbuildinfo
+coverage/
+.vite/
+
+# Plugin (CMake)
+plugin/build*/
+plugin/.deps/
+plugin/release/
+
+# Installer output
+installer/output/
+
+# Editors / OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+
+# Local runtime data
+*.log
+.env
