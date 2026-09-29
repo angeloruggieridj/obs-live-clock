@@ -341,7 +341,7 @@ Tutti i requisiti della §4, undo/redo compreso, e i requisiti non funzionali de
 - AC2 All'avvio della REC in OBS, il monitor passa da PRE-SHOW a LIVE entro 500 ms.
 - AC3 Il passaggio tra CAM 1, CAM 2 e CAM 3 non fa avanzare il blocco. Il passaggio alla scena del break entra nel blocco break.
 - AC4 Durante un servizio, il countdown al rientro resta entro ±0,5 s dal tempo residuo di Playlist Deck.
-- AC5 Se un servizio viene rimosso dalla playlist durante la live, fine prevista e tempo di studio si aggiornano subito tramite `playlist-changed`.
+- AC5 Se un servizio viene rimosso dalla playlist durante la live, sparisce subito dal "prossimo" tramite `playlist-changed` e il suo tempo torna allo studio del blocco. La fine del blocco e la fine prevista del programma **non cambiano**, perché i blocchi sono contenitori a durata fissa (§9).
 - AC6 Se OBS viene spento durante la live, entro 2 s compare "STIMATO" e il conteggio continua. Alla riaccensione, lo stato torna MISURATO e i tempi si riallineano.
 - AC7 Se il server si riavvia a metà puntata, riprende sul blocco giusto con i tempi corretti.
 - AC8 Blocco in sforamento: ambra sotto 1:00; rosso con contatore positivo oltre lo zero; il recupero compare sul prossimo blocco elastico.
