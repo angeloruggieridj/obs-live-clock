@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-import { closeSlot, enterSlot, moveTo } from './cursor';
+import { closeSlot, enterSlot, moveTo, startBlock } from './cursor';
 import { resolveDeckIndex } from './rundown';
 import type { LiveState, MonoMs, Slot } from './types';
 
@@ -55,7 +55,11 @@ export function match(s: LiveState, at: MonoMs): void {
     return;
   }
 
-  if (s.returnSlot !== null && slotMatches(s, s.slots[s.returnSlot]!, target)) {
+  if (
+    s.returnSlot !== null &&
+    s.slotRt[s.returnSlot]!.status === 'onair' &&
+    slotMatches(s, s.slots[s.returnSlot]!, target)
+  ) {
     closeSlot(s, s.cursor, at);
     s.cursor = s.returnSlot;
     s.returnSlot = null;
@@ -80,10 +84,22 @@ export function match(s: LiveState, at: MonoMs): void {
 
   for (let i = 0; i < base; i++) {
     if (s.slotRt[i]!.status === 'postponed' && slotMatches(s, s.slots[i]!, target)) {
-      if (s.returnSlot === null) s.returnSlot = s.cursor;
-      else closeSlot(s, s.cursor, at);
+      if (s.returnSlot === null) {
+        s.returnSlot = s.cursor;
+        // A studio slot being interrupted stays 'onair' (paused, resumed later); a media or break slot
+        // being interrupted is really over now, so it must be closed here rather than absorbing the
+        // out-of-order clip's airtime when the matcher eventually reaches it again.
+        if (s.cursor >= 0 && s.slots[s.cursor]!.kind !== 'studio') closeSlot(s, s.cursor, at);
+      } else {
+        closeSlot(s, s.cursor, at);
+      }
       enterSlot(s, i, at);
       s.cursor = i;
+      const slot = s.slots[i]!;
+      if (slot.kind === 'break') {
+        startBlock(s, slot.blockIndex, at);
+        s.media = null;
+      }
       s.offScript = null;
       return;
     }

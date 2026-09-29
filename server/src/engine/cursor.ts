@@ -50,9 +50,15 @@ export function moveTo(s: LiveState, target: number, at: MonoMs): void {
   s.cursor = target;
 }
 
-/** Manual correction to an earlier slot: later slots return to pending and later blocks are un-started. */
+/**
+ * Manual correction to an earlier slot: every later slot (to the end of the rundown, not just up to the
+ * current cursor) returns to pending and later blocks are un-started. Slots already `dropped` stay dropped.
+ * This also unwinds any out-of-order excursion (`returnSlot`), since slots past `index` may include one the
+ * cursor is mid-excursion from.
+ */
 export function correctTo(s: LiveState, index: number, at: MonoMs): void {
-  for (let j = index + 1; j <= s.cursor; j++) {
+  for (let j = index + 1; j < s.slots.length; j++) {
+    if (s.slotRt[j]!.status === 'dropped') continue;
     s.slotRt[j] = { status: 'pending', startedAt: null, endedAt: null };
   }
   const blockIndex = s.slots[index]!.blockIndex;

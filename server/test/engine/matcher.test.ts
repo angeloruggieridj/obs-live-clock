@@ -148,6 +148,41 @@ describe('match', () => {
     expect(s.cursor).toBe(0);
     expect(s.offScript).toEqual({ scene: 'PLAYOUT', since: T0 + 20_000 });
   });
+
+  it('closes an interrupted media slot when a postponed item airs out of order', () => {
+    const s = live();
+    // Deck order reversed relative to the fixture: index 0 is Servizio 2, index 1 is Servizio 1.
+    s.deck.items = [
+      { index: 0, path: 'D:/media/servizio2.mp4', title: 'Servizio 2', durationMs: 120_000 },
+      { index: 1, path: 'D:/media/servizio1.mp4', title: 'Servizio 1', durationMs: 185_000 },
+    ];
+    deckPlays(s, 0, T0 + 10_000); // Servizio 2 plays first -> jumps straight to slot 5
+    expect(s.cursor).toBe(5);
+    expect(s.slotRt[1]!.status).toBe('postponed');
+    deckPlays(s, 1, T0 + 130_000); // Servizio 1 airs out of order, interrupting Servizio 2
+    expect(s.cursor).toBe(1);
+    expect(s.returnSlot).toBe(5);
+    expect(s.slotRt[5]).toMatchObject({ status: 'done', endedAt: T0 + 130_000 });
+    onScene(s, 'CAM 1', T0 + 315_000); // forward from returnSlot lands on slot 6, not a direct resume
+    expect(s.cursor).toBe(6);
+    expect(s.returnSlot).toBeNull();
+  });
+
+  it('starts the interrupted break block and clears the filler media when it airs out of order', () => {
+    const s = live();
+    deckPlays(s, 1, T0 + 10_000); // Servizio 2 (fixture order) -> jumps to slot 5, postponing slot 1 and 3
+    expect(s.cursor).toBe(5);
+    expect(s.slotRt[1]!.status).toBe('postponed');
+    expect(s.slotRt[3]!.status).toBe('postponed');
+    onScene(s, 'CAM 1', T0 + 130_000);
+    expect(s.cursor).toBe(6);
+    s.media = { input: 'Tappo', playing: true, cursorMs: 0, durationMs: 1, at: 0 };
+    onScene(s, 'BREAK', T0 + 140_000); // Break airs out of order, interrupting the (studio) slot 6
+    expect(s.cursor).toBe(3);
+    expect(s.returnSlot).toBe(6);
+    expect(s.blockRt[1]!.startedAt).toBe(T0 + 140_000);
+    expect(s.media).toBeNull();
+  });
 });
 
 describe('correctTo', () => {
@@ -163,5 +198,42 @@ describe('correctTo', () => {
     expect(s.blockRt[1]!.startedAt).toBeNull();
     expect(s.blockRt[2]!.startedAt).toBeNull();
     expect(s.blockRt[0]!.endedAt).toBeNull();
+  });
+
+  it('resets everything after the target, out-of-order excursions included', () => {
+    const s = live();
+    onScene(s, 'BREAK', T0 + 700_000); // slot 1 postponed, cursor 3
+    onScene(s, 'CAM 1', T0 + 880_000); // cursor 4
+    deckPlays(s, 0, T0 + 900_000); // Servizio 1 out of order -> cursor 1, returnSlot 4, slot 4 still onair
+    expect(s.cursor).toBe(1);
+    expect(s.returnSlot).toBe(4);
+
+    correctTo(s, 0, T0 + 905_000);
+
+    expect(s.cursor).toBe(0);
+    expect(s.returnSlot).toBeNull();
+    expect(statuses(s).slice(1)).toEqual(['pending', 'pending', 'pending', 'pending', 'pending', 'pending', 'pending']);
+    expect(s.blockRt[1]!.startedAt).toBeNull();
+    expect(s.blockRt[2]!.startedAt).toBeNull();
+    expect(s.blockRt[3]!.startedAt).toBeNull();
+
+    onScene(s, 'CAM 1', T0 + 910_000);
+    expect(s.cursor).toBe(0); // camera switch within the studio group: no advance
+    deckPlays(s, 0, T0 + 915_000);
+    expect(s.cursor).toBe(1);
+    onScene(s, 'CAM 1', T0 + 920_000);
+    expect(s.cursor).toBe(2);
+  });
+
+  it('keeps dropped slots dropped when correcting backward', () => {
+    const s = live();
+    s.slotRt[5]!.status = 'dropped';
+    onScene(s, 'BREAK', T0 + 700_000); // cursor 3
+    onScene(s, 'CAM 1', T0 + 880_000); // cursor 4
+    correctTo(s, 0, T0 + 890_000);
+    expect(s.cursor).toBe(0);
+    expect(s.slotRt[5]!.status).toBe('dropped');
+    expect(s.slotRt[1]!.status).toBe('pending');
+    expect(s.slotRt[4]!.status).toBe('pending');
   });
 });
