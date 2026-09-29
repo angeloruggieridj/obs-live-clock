@@ -116,3 +116,37 @@ describe('block countdown source', () => {
     expect(computeTiming(lost, T0 + 1_500_003).block?.source).toBe('estimated');
   });
 });
+
+describe('ended media counts past zero', () => {
+  it('an ended tappo still on BREAK: return countdown running, 15 s past its end', () => {
+    const s = run(
+      liveState(),
+      { type: 'ProgramSceneChanged', at: T0 + 720_000, scene: 'BREAK', deckOnProgram: false },
+      { type: 'MediaStatus', at: T0 + 900_000, input: 'Tappo', playing: false, cursorMs: 180_000, durationMs: 180_000 },
+    );
+    const t = computeTiming(s, T0 + 915_000);
+    expect(t.returnAt).toEqual({ kind: 'running', endsAt: T0 + 900_000, source: 'measured' });
+    expect(T0 + 915_000 - (t.returnAt as { endsAt: number }).endsAt).toBe(15_000);
+  });
+
+  it('an ended deck clip still on Program: running, past zero (within the 250 ms tolerance)', () => {
+    const s = run(
+      liveState(),
+      { type: 'DeckItemStarted', at: T0 + 60_000, index: 0, path: 'D:/media/servizio1.mp4', title: 'Servizio 1', durationMs: 185_000 },
+      { type: 'ProgramSceneChanged', at: T0 + 60_000, scene: 'PLAYOUT', deckOnProgram: true },
+      { type: 'DeckPlayback', at: T0 + 245_000, index: 0, positionMs: 184_800, durationMs: 185_000, playing: false },
+    );
+    const t = computeTiming(s, T0 + 260_000);
+    expect(t.onAir?.remaining).toEqual({ kind: 'running', endsAt: T0 + 245_200, source: 'measured' });
+    expect(t.returnAt).toEqual({ kind: 'running', endsAt: T0 + 245_200, source: 'measured' });
+  });
+
+  it('a tappo paused mid-way stays frozen', () => {
+    const s = run(
+      liveState(),
+      { type: 'ProgramSceneChanged', at: T0 + 720_000, scene: 'BREAK', deckOnProgram: false },
+      { type: 'MediaStatus', at: T0 + 800_000, input: 'Tappo', playing: false, cursorMs: 80_000, durationMs: 180_000 },
+    );
+    expect(computeTiming(s, T0 + 900_000).onAir?.remaining).toEqual({ kind: 'frozen', remainingMs: 100_000, source: 'measured' });
+  });
+});

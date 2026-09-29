@@ -52,6 +52,19 @@ function finalize(r: Remaining | null, frozenAt: MonoMs | null, lost: boolean): 
   return out;
 }
 
+/** Tolerance for "the media reached its end" (players often stop a few frames short). */
+const MEDIA_END_TOLERANCE_MS = 250;
+
+/**
+ * Remaining time of a media from a player status. Playing, or stopped at its end (a held last frame is
+ * still on Program), it runs, so an ended media counts past zero; only a genuine mid-clip pause freezes.
+ */
+function mediaRemaining(playing: boolean, positionMs: number, durationMs: number, at: MonoMs): Remaining {
+  const left = Math.max(0, durationMs - positionMs);
+  const ended = !playing && positionMs >= durationMs - MEDIA_END_TOLERANCE_MS;
+  return playing || ended ? running(at + left, 'measured') : { kind: 'frozen', remainingMs: left, source: 'measured' };
+}
+
 function onAirRemaining(s: LiveState, slotIndex: number): OnAirTiming {
   const slot = s.slots[slotIndex]!;
   const rt = s.slotRt[slotIndex]!;
@@ -60,12 +73,7 @@ function onAirRemaining(s: LiveState, slotIndex: number): OnAirTiming {
   if (slot.kind === 'media') {
     const cur = s.deck.current;
     if (cur !== null && cur.durationMs >= 0) {
-      const left = Math.max(0, cur.durationMs - cur.positionMs);
-      return {
-        ...base,
-        durationMs: cur.durationMs,
-        remaining: cur.playing ? running(cur.at + left, 'measured') : { kind: 'frozen', remainingMs: left, source: 'measured' },
-      };
+      return { ...base, durationMs: cur.durationMs, remaining: mediaRemaining(cur.playing, cur.positionMs, cur.durationMs, cur.at) };
     }
     const planned = slotDuration(s, slot);
     return { ...base, durationMs: planned.ms, remaining: running((rt.startedAt ?? 0) + planned.ms, planned.source) };
@@ -75,12 +83,7 @@ function onAirRemaining(s: LiveState, slotIndex: number): OnAirTiming {
   const block = s.episode.blocks[slot.blockIndex]!;
   const media = s.media;
   if (block.kind === 'break' && block.mediaInput !== null && media !== null && media.input === block.mediaInput && media.durationMs > 0) {
-    const left = Math.max(0, media.durationMs - media.cursorMs);
-    return {
-      ...base,
-      durationMs: media.durationMs,
-      remaining: media.playing ? running(media.at + left, 'measured') : { kind: 'frozen', remainingMs: left, source: 'measured' },
-    };
+    return { ...base, durationMs: media.durationMs, remaining: mediaRemaining(media.playing, media.cursorMs, media.durationMs, media.at) };
   }
   const end = blockEndsAt(s, slot.blockIndex) ?? (rt.startedAt ?? 0) + slot.plannedDurationMs;
   return { ...base, durationMs: s.blockRt[slot.blockIndex]!.targetMs ?? slot.plannedDurationMs, remaining: running(end, 'planned') };
