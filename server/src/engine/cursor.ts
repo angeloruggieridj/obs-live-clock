@@ -63,7 +63,7 @@ export function moveTo(s: LiveState, target: number, at: MonoMs, by: BlockStart 
 export function correctTo(s: LiveState, index: number, at: MonoMs): void {
   for (let j = index + 1; j < s.slots.length; j++) {
     if (s.slotRt[j]!.status === 'dropped') continue;
-    s.slotRt[j] = { status: 'pending', startedAt: null, endedAt: null };
+    s.slotRt[j] = { status: 'pending', startedAt: null, endedAt: null, provisional: false };
   }
   const blockIndex = s.slots[index]!.blockIndex;
   for (let b = blockIndex + 1; b < s.blockRt.length; b++) {
@@ -77,4 +77,15 @@ export function correctTo(s: LiveState, index: number, at: MonoMs): void {
   startBlock(s, blockIndex, at);
   s.cursor = index;
   s.returnSlot = null;
+  clearAmbiguity(s);
+}
+
+/**
+ * A correction (or a normal media/break observation) resolves any outstanding ambiguity: every provisional
+ * flag left by the estimating loop is discarded along with it, since reality has now been confirmed one way
+ * or the other.
+ */
+export function clearAmbiguity(s: LiveState): void {
+  s.ambiguous = false;
+  for (const rt of s.slotRt) rt.provisional = false;
 }

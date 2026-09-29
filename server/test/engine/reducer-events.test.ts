@@ -52,7 +52,7 @@ describe('outputs stopping and restarting', () => {
     const s = liveState();
     // Put the show in the last block directly (commands such as Goto arrive in Task 8).
     s.cursor = 7;
-    s.slotRt[7] = { status: 'onair', startedAt: T0 + 1_500_000, endedAt: null };
+    s.slotRt[7] = { status: 'onair', startedAt: T0 + 1_500_000, endedAt: null, provisional: false };
     s.blockRt[3] = { startedAt: T0 + 1_500_000, endedAt: null, adjustMs: 0, targetMs: 120_000, startedBy: 'obs' };
     const ended = run(s, { type: 'OutputChanged', at: T0 + 1_620_000, output: 'rec', state: 'stopped' });
     expect(ended.phase).toBe('ended');

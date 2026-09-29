@@ -261,7 +261,7 @@ describe('OBS drop near a block end: estimated hand-overs are provisional', () =
     expect(s.blockRt[1]!.startedBy).toBe('time');
   });
 
-  it('R1: a restore that confirms a provisional position past the pre-loss slot keeps it', () => {
+  it("R1': a restore that confirms a provisional studio position stays ambiguous until a real media/break match", () => {
     let s = run(
       liveState(),
       { type: 'SourceLost', at: T0 + 600_000 },
@@ -274,9 +274,12 @@ describe('OBS drop near a block end: estimated hand-overs are provisional', () =
       { type: 'SourceRestored', at: T0 + 1_000_000 },
       { type: 'ProgramSceneChanged', at: T0 + 1_000_000, scene: 'CAM 2', deckOnProgram: false },
     );
-    // CAM 2 confirms the provisional block-2 studio slot: no rollback to the pre-loss block 1 slot.
+    // CAM 2 confirms the provisional block-2 studio slot: no rollback to the pre-loss block 1 slot. But the
+    // break the estimating loop guessed its way through was never actually observed, so the position is
+    // ambiguous and the clock keeps degrading like OBS is still lost until that gap is resolved.
     expect(s.cursor).toBe(4);
-    expect(presenterView(s, T0 + 1_000_001, toWall).block).toMatchObject({ index: 2, anchor: { source: 'planned' } });
+    expect(s.ambiguous).toBe(true);
+    expect(presenterView(s, T0 + 1_000_001, toWall).block).toMatchObject({ index: 2, anchor: { source: 'estimated' } });
     expect(s.preLossCursor).toBeNull();
     expect(s.resyncPending).toBe(false);
 
@@ -285,9 +288,60 @@ describe('OBS drop near a block end: estimated hand-overs are provisional', () =
       { type: 'DeckItemStarted', at: T0 + 1_100_000, index: 1, path: 'D:/media/servizio2.mp4', title: 'Servizio 2', durationMs: 120_000 },
       { type: 'ProgramSceneChanged', at: T0 + 1_100_000, scene: 'PLAYOUT', deckOnProgram: true },
     );
+    // Servizio 2 airing is a real, normal media observation: it resolves the ambiguity.
     expect(s.cursor).toBe(5);
+    expect(s.ambiguous).toBe(false);
     // The break aired by time while OBS was lost: it is 'done', not 'postponed' by a rollback that never happened.
     expect(s.slotRt[3]!.status).toBe('done');
+  });
+
+  it("R1': a restore confirming studio with no unobserved gap behind it is not ambiguous", () => {
+    // A short outage entirely inside a single studio block never crosses a break or media slot, so there is
+    // nothing behind the confirmed position that could still be wrong.
+    const s = run(
+      liveState(),
+      { type: 'SourceLost', at: T0 + 50_000 },
+      { type: 'Tick', at: T0 + 80_000 },
+      { type: 'SourceRestored', at: T0 + 90_000 },
+      { type: 'ProgramSceneChanged', at: T0 + 90_000, scene: 'CAM 2', deckOnProgram: false },
+    );
+    expect(s.cursor).toBe(0);
+    expect(s.ambiguous).toBe(false);
+  });
+
+  it("R1': an ambiguous position is resolved by the real break, then hands over to block 2 as observed", () => {
+    let s = run(
+      liveState(),
+      { type: 'ProgramSceneChanged', at: T0 + 100_000, scene: 'CAM 2', deckOnProgram: false },
+      { type: 'DeckItemStarted', at: T0 + 200_000, index: 0, path: 'D:/media/servizio1.mp4', title: 'Servizio 1', durationMs: 185_000 },
+      { type: 'ProgramSceneChanged', at: T0 + 200_000, scene: 'PLAYOUT', deckOnProgram: true },
+      { type: 'ProgramSceneChanged', at: T0 + 385_000, scene: 'CAM 1', deckOnProgram: false },
+    );
+    expect(s.cursor).toBe(2); // b1-s2, studio, block 0
+
+    s = run(s, { type: 'SourceLost', at: T0 + 700_000 }, { type: 'Tick', at: T0 + 950_000 });
+    expect(s.cursor).toBe(4); // estimating loop guesses its way through the break into block 2 studio
+
+    s = run(
+      s,
+      { type: 'SourceRestored', at: T0 + 950_000 },
+      { type: 'ProgramSceneChanged', at: T0 + 950_000, scene: 'CAM 1', deckOnProgram: false },
+    );
+    expect(s.cursor).toBe(4);
+    expect(s.ambiguous).toBe(true);
+    expect(presenterView(s, T0 + 950_001, toWall).block).toMatchObject({ index: 2, anchor: { source: 'estimated' } });
+
+    // The real break arrives: it is behind the confirmed studio position, but it was never actually
+    // observed, so this is a correction (not an out-of-order excursion) and block 1 restarts as observed.
+    s = run(s, { type: 'ProgramSceneChanged', at: T0 + 1_000_000, scene: 'BREAK', deckOnProgram: false });
+    expect(s.cursor).toBe(3);
+    expect(presenterView(s, T0 + 1_000_001, toWall).segment).toBe('break');
+    expect(s.ambiguous).toBe(false);
+    expect(s.blockRt[1]).toMatchObject({ startedAt: T0 + 1_000_000, startedBy: 'obs' });
+
+    s = run(s, { type: 'ProgramSceneChanged', at: T0 + 1_180_000, scene: 'CAM 2', deckOnProgram: false });
+    expect(s.cursor).toBe(4);
+    expect(s.blockRt[2]).toMatchObject({ startedBy: 'obs' });
   });
 
   it('an operator command during the loss is not undone by the restore', () => {
@@ -321,7 +375,7 @@ describe('Brief cutaway to studio during a clip', () => {
     expect(v.returnTo).toMatchObject({ blockName: 'Primo blocco', anchor: { kind: 'countdown', endsAt: toWall(T0 + 245_000) } });
     expect(s.cursor).toBe(1);
     expect(s.returnSlot).toBe(2);
-    expect(s.slotRt[1]).toEqual({ status: 'onair', startedAt: T0 + 60_000, endedAt: null });
+    expect(s.slotRt[1]).toEqual({ status: 'onair', startedAt: T0 + 60_000, endedAt: null, provisional: false });
     expect(s.slotRt[2]!.status).toBe('onair');
 
     s = run(s, { type: 'ProgramSceneChanged', at: T0 + 245_000, scene: 'CAM 1', deckOnProgram: false });

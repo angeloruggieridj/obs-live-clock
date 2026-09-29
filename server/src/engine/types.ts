@@ -79,6 +79,12 @@ export interface SlotRuntime {
   status: SlotStatus;
   startedAt: MonoMs | null;
   endedAt: MonoMs | null;
+  /**
+   * Set on a slot entered or passed over by the estimated (OBS-lost) hand-over loop: its status/timing was
+   * guessed by the clock, never observed. Cleared by `correctTo` and by a matcher correction or a normal
+   * media/break match (see `LiveState.ambiguous`).
+   */
+  provisional: boolean;
 }
 
 export interface BlockRuntime {
@@ -139,6 +145,13 @@ export interface LiveState {
   preLossCursor: number | null;
   /** Set on SourceRestored when the cursor moved past `preLossCursor` while OBS was lost. */
   resyncPending: boolean;
+  /**
+   * Set when a restore confirms the provisional studio position but a provisional break/media slot
+   * (guessed by the estimating loop, never observed) still lies behind it: reality has not fully caught up
+   * with the guess yet, so timing degrades like OBS being lost until a later match resolves it one way or
+   * the other (a normal media/break observation, or a correction back to that slot).
+   */
+  ambiguous: boolean;
   slotRt: SlotRuntime[];
   blockRt: BlockRuntime[];
   program: { scene: string | null; deckOnProgram: boolean };

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-import { closeSlot, correctTo, enterSlot, moveTo, startBlock } from './cursor';
+import { clearAmbiguity, closeSlot, correctTo, enterSlot, moveTo, startBlock } from './cursor';
 import { resolveDeckIndex } from './rundown';
 import type { LiveState, MonoMs, Slot } from './types';
 
@@ -43,10 +43,14 @@ function markOffScript(s: LiveState, at: MonoMs): void {
 
 /**
  * First match after OBS came back: hand-overs made by time during the loss were guesses. If what OBS now
- * shows still matches the provisional current slot, the guess was right: keep it (the block stays
- * 'planned', not 'measured' — nothing was actually observed). Only when Program shows something else does
- * the guess get discarded: return to the pre-loss slot (un-starting the blocks started by time since) and
- * let the normal match below decide from there.
+ * shows still matches the provisional current slot, the guess was right: keep it. Only when Program shows
+ * something else does the guess get discarded: return to the pre-loss slot (un-starting the blocks started
+ * by time since) and let the normal match below decide from there.
+ *
+ * A confirmed studio slot is not necessarily the whole story: the estimating loop may have guessed its way
+ * through a break or a media slot to get there, and OBS never actually saw that break/media air. That gap
+ * is marked `ambiguous` and stays that way — degrading the clock like OBS is still lost — until a later
+ * match resolves it: a real media/break observation, or a correction back into the gap.
  */
 function resync(s: LiveState, at: MonoMs): void {
   const pre = s.preLossCursor;
@@ -54,9 +58,35 @@ function resync(s: LiveState, at: MonoMs): void {
   s.resyncPending = false;
   if (pre === null || pre < 0 || (s.returnSlot ?? s.cursor) <= pre) return;
   const target = classify(s);
-  if (target !== null && s.cursor >= 0 && slotMatches(s, s.slots[s.cursor]!, target)) return;
-  if (s.returnSlot !== null) closeSlot(s, s.cursor, at);
-  correctTo(s, pre, at);
+  const matchesCurrent = target !== null && s.cursor >= 0 && slotMatches(s, s.slots[s.cursor]!, target);
+  if (!matchesCurrent) {
+    if (s.returnSlot !== null) closeSlot(s, s.cursor, at);
+    correctTo(s, pre, at);
+    return;
+  }
+  if (target!.kind !== 'studio') return; // a media/break match below clears the ambiguity itself
+  let ambiguous = false;
+  for (let i = pre + 1; i < s.cursor; i++) {
+    const rt = s.slotRt[i]!;
+    if (s.slots[i]!.kind !== 'studio' && rt.provisional && rt.status !== 'dropped') {
+      ambiguous = true;
+      break;
+    }
+  }
+  if (ambiguous) s.ambiguous = true;
+  else clearAmbiguity(s);
+}
+
+/**
+ * A slot the estimating loop guessed its way through (never observed) can still match the target during the
+ * backward search: unlike a genuine out-of-order excursion, this is a correction to the truth, not a detour
+ * from it, so the block it belongs to restarts fresh as observed ('obs') rather than keeping its guessed start.
+ */
+function correctProvisional(s: LiveState, index: number, at: MonoMs): void {
+  const blockIndex = s.slots[index]!.blockIndex;
+  s.blockRt[blockIndex] = { ...s.blockRt[blockIndex]!, startedAt: null, endedAt: null, targetMs: null, startedBy: null };
+  s.slotRt[index] = { status: 'pending', startedAt: null, endedAt: null, provisional: false };
+  correctTo(s, index, at);
 }
 
 /** Align the cursor with what OBS shows on Program. Mutates `s`. */
@@ -71,6 +101,7 @@ export function match(s: LiveState, at: MonoMs): void {
   const current = s.cursor >= 0 ? s.slots[s.cursor]! : null;
   if (current !== null && slotMatches(s, current, target)) {
     s.offScript = null;
+    if (target.kind !== 'studio') clearAmbiguity(s);
     return;
   }
 
@@ -83,6 +114,7 @@ export function match(s: LiveState, at: MonoMs): void {
     s.cursor = s.returnSlot;
     s.returnSlot = null;
     s.offScript = null;
+    if (target.kind !== 'studio') clearAmbiguity(s);
     return;
   }
 
@@ -97,12 +129,22 @@ export function match(s: LiveState, at: MonoMs): void {
       }
       moveTo(s, i, at);
       s.offScript = null;
+      if (target.kind !== 'studio') clearAmbiguity(s);
       return;
     }
   }
 
   for (let i = 0; i < base; i++) {
-    if (s.slotRt[i]!.status === 'postponed' && slotMatches(s, s.slots[i]!, target)) {
+    const rt = s.slotRt[i]!;
+    const slot = s.slots[i]!;
+    // A slot the estimating loop only guessed its way through (never observed) is a correction, not an
+    // out-of-order excursion: unlike a genuine postponed item, its block restarts fresh as observed.
+    if (rt.provisional && (rt.status === 'done' || rt.status === 'postponed') && slotMatches(s, slot, target)) {
+      correctProvisional(s, i, at);
+      s.offScript = null;
+      return;
+    }
+    if (rt.status === 'postponed' && slotMatches(s, slot, target)) {
       if (s.returnSlot === null) {
         s.returnSlot = s.cursor;
         // A studio slot being interrupted stays 'onair' (paused, resumed later); a media or break slot
@@ -114,18 +156,19 @@ export function match(s: LiveState, at: MonoMs): void {
       }
       enterSlot(s, i, at);
       s.cursor = i;
-      const slot = s.slots[i]!;
       if (slot.kind === 'break') {
         startBlock(s, slot.blockIndex, at);
         s.media = null;
       }
       s.offScript = null;
+      clearAmbiguity(s); // a real media/break observation, in or out of order, resolves any ambiguity
       return;
     }
   }
 
   if (target.kind === 'media' && reenterClip(s, target, at)) {
     s.offScript = null;
+    clearAmbiguity(s);
     return;
   }
 

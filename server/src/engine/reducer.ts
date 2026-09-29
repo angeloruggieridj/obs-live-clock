@@ -284,8 +284,13 @@ function applyTick(s: LiveState, at: MonoMs): boolean {
       const bi = currentBlockIndex(s);
       const end = bi >= 0 ? blockEndsAt(s, bi) : null;
       if (end === null || at < end || bi >= lastBlockIndex(s)) break;
+      const from = s.cursor;
+      const target = firstSlotOfBlock(s, bi + 1);
       s.returnSlot = null;
-      moveTo(s, firstSlotOfBlock(s, bi + 1), end, 'time');
+      moveTo(s, target, end, 'time');
+      // Nothing between `from` and `target` was actually observed: the clock alone decided it. Mark it
+      // provisional so a later restore can tell a real observation from a guess (see matcher.ts resync()).
+      for (let k = Math.max(0, from); k <= target; k++) s.slotRt[k]!.provisional = true;
       changed = true;
     }
   } else if (canMatch(s)) {

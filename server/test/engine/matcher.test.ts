@@ -37,7 +37,7 @@ describe('moveTo from the start', () => {
   it('puts slot 0 on air and starts block 0 with its target', () => {
     const s = live();
     expect(s.cursor).toBe(0);
-    expect(s.slotRt[0]).toEqual({ status: 'onair', startedAt: T0, endedAt: null });
+    expect(s.slotRt[0]).toEqual({ status: 'onair', startedAt: T0, endedAt: null, provisional: false });
     expect(s.blockRt[0]).toMatchObject({ startedAt: T0, targetMs: 720_000 });
   });
 });

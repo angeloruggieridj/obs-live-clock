@@ -94,7 +94,9 @@ export function computeTiming(s: LiveState, nowIn: MonoMs): TimingSnapshot {
   if (s.t0 === null) return { ...EMPTY };
   const now = s.recPausedAt ?? nowIn;
   const frozenAt = s.recPausedAt;
-  const lost = s.obs === 'lost';
+  // An unresolved ambiguity (R1: a confirmed studio slot with a still-unobserved break/media behind it)
+  // degrades exactly like OBS being lost: nothing here has actually been re-observed yet either.
+  const lost = s.obs === 'lost' || s.ambiguous;
 
   const bi = currentBlockIndex(s);
   const last = lastBlockIndex(s);
