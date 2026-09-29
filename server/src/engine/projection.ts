@@ -18,7 +18,7 @@ export interface PresenterView {
   returnTo: { blockName: string; anchor: Anchor } | null;
   next: { title: string; durationMs: number; source: Source } | null;
   programEnd: { anchor: Anchor; endsAtWall: number | null } | null;
-  delayMs: number | null;
+  delay: { ms: number; source: Source } | null;
   thresholds: { warnMs: number; returnImminentMs: number };
   message: { text: string } | null;
   status: { rec: boolean; stream: boolean; recPaused: boolean; obs: 'ok' | 'lost'; control: 'auto' | 'manual' };
@@ -81,7 +81,7 @@ export function presenterView(s: LiveState, now: MonoMs, toWall: (mono: MonoMs) 
       t.forecast === null
         ? null
         : { anchor: programEndAnchor, endsAtWall: programEndAnchor.kind === 'countdown' ? programEndAnchor.endsAt : null },
-    delayMs: t.delayMs,
+    delay: t.delay,
     thresholds: { warnMs: s.episode.preset.warnMs, returnImminentMs: s.episode.preset.returnImminentMs },
     message: s.message === null ? null : { text: s.message.text },
     status: { ...s.outputs, obs: s.obs, control: s.control },

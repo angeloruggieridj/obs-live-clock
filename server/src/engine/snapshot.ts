@@ -18,7 +18,8 @@ export interface OnAirTiming {
 export interface TimingSnapshot {
   blockIndex: number;
   block: Remaining | null;
-  delayMs: number | null;
+  /** Current block end (or now, if later) minus its planned end; its source is the block anchor's. */
+  delay: { ms: number; source: Source } | null;
   plannedEndAt: MonoMs | null;
   forecast: Remaining | null;
   rundownFinished: boolean;
@@ -29,7 +30,7 @@ export interface TimingSnapshot {
 }
 
 const EMPTY: TimingSnapshot = {
-  blockIndex: -1, block: null, delayMs: null, plannedEndAt: null, forecast: null, rundownFinished: false,
+  blockIndex: -1, block: null, delay: null, plannedEndAt: null, forecast: null, rundownFinished: false,
   segment: null, onAir: null, returnAt: null, returnBlockIndex: null,
 };
 
@@ -102,10 +103,11 @@ export function computeTiming(s: LiveState, nowIn: MonoMs): TimingSnapshot {
   // A block start is measured only when OBS (or the operator) marked it; a start by time is the plan.
   const blockSource: Source = bi >= 0 && s.blockRt[bi]!.startedBy === 'obs' ? 'measured' : 'planned';
 
-  let delayMs: number | null = null;
+  let delay: TimingSnapshot['delay'] = null;
   let forecast: Remaining | null = null;
   if (bi >= 0 && endsAt !== null) {
-    delayMs = Math.max(endsAt, now) - plannedEndAt(s, bi)!;
+    const delayMs = Math.max(endsAt, now) - plannedEndAt(s, bi)!;
+    delay = { ms: delayMs, source: lost ? 'estimated' : blockSource };
     let residual = delayMs;
     for (let j = bi + 1; j <= last && residual > 0; j++) {
       if (isElastic(s, j)) residual -= Math.min(residual, studioTimeMs(s, j));
@@ -144,7 +146,7 @@ export function computeTiming(s: LiveState, nowIn: MonoMs): TimingSnapshot {
   return {
     blockIndex: bi,
     block: finalize(endsAt === null ? null : running(endsAt, blockSource), frozenAt, lost),
-    delayMs,
+    delay,
     plannedEndAt: programPlannedEnd,
     forecast: finalize(forecast, frozenAt, lost),
     rundownFinished: bi === last && endsAt !== null && now > endsAt,

@@ -30,7 +30,7 @@ describe('presenterView', () => {
       anchor: { kind: 'countdown', endsAt: toWall(T0 + 1_620_000), source: 'planned' },
       endsAtWall: toWall(T0 + 1_620_000),
     });
-    expect(v.delayMs).toBe(0);
+    expect(v.delay).toEqual({ ms: 0, source: 'measured' });
     expect(v.thresholds).toEqual({ warnMs: 60_000, returnImminentMs: 10_000 });
     expect(v.preshow).toBeNull();
   });
@@ -55,6 +55,7 @@ describe('presenterView', () => {
     const v = presenterView(run(liveState(), { type: 'SourceLost', at: T0 + 1 }), T0 + 2, toWall);
     expect(v.block?.anchor).toMatchObject({ source: 'estimated' });
     expect(v.status.obs).toBe('lost');
+    expect(v.delay).toEqual({ ms: 0, source: 'estimated' });
   });
 
   it('shows frozen values during a live-to-tape REC pause', () => {

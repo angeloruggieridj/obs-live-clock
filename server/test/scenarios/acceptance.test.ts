@@ -85,7 +85,7 @@ describe('AC8 — overrun: amber/red is derivable, recovery lands on the next el
     expect(remaining).toBeGreaterThan(0);
 
     const over = computeTiming(s, T0 + 750_000);
-    expect(over.delayMs).toBe(30_000); // red, +0:30
+    expect(over.delay).toEqual({ ms: 30_000, source: 'measured' }); // red, +0:30
 
     const red = presenterView(s, T0 + 750_000, toWall).block!.anchor;
     expect(red.kind).toBe('countdown');

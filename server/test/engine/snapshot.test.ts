@@ -6,13 +6,13 @@ import { T0, freshState, liveState, run } from '../helpers';
 describe('computeTiming', () => {
   it('is empty before the program starts', () => {
     const t = computeTiming(freshState(), 5);
-    expect(t).toMatchObject({ blockIndex: -1, block: null, delayMs: null, forecast: null, segment: null });
+    expect(t).toMatchObject({ blockIndex: -1, block: null, delay: null, forecast: null, segment: null });
   });
 
   it('on time in block 1', () => {
     const t = computeTiming(liveState(), T0 + 100_000);
     expect(t.block).toEqual({ kind: 'running', endsAt: T0 + 720_000, source: 'measured' });
-    expect(t.delayMs).toBe(0);
+    expect(t.delay).toEqual({ ms: 0, source: 'measured' });
     expect(t.plannedEndAt).toBe(T0 + 1_620_000);
     expect(t.forecast).toEqual({ kind: 'running', endsAt: T0 + 1_620_000, source: 'planned' });
     expect(t.segment).toBe('studio');
@@ -21,7 +21,7 @@ describe('computeTiming', () => {
 
   it('overrun: delay grows and is absorbed by the next elastic block in the forecast', () => {
     const t = computeTiming(liveState(), T0 + 750_000);
-    expect(t.delayMs).toBe(30_000);
+    expect(t.delay).toEqual({ ms: 30_000, source: 'measured' });
     expect(t.forecast).toEqual({ kind: 'running', endsAt: T0 + 1_620_000, source: 'planned' });
   });
 
@@ -88,7 +88,7 @@ describe('computeTiming', () => {
     const t = computeTiming(s, T0 + 1_700_000);
     expect(t.blockIndex).toBe(3);
     expect(t.rundownFinished).toBe(true);
-    expect(t.delayMs).toBe(80_000);
+    expect(t.delay).toEqual({ ms: 80_000, source: 'measured' });
   });
 
   it('out-of-order service returns to the interrupted block', () => {
@@ -148,5 +148,14 @@ describe('ended media counts past zero', () => {
       { type: 'MediaStatus', at: T0 + 800_000, input: 'Tappo', playing: false, cursorMs: 80_000, durationMs: 180_000 },
     );
     expect(computeTiming(s, T0 + 900_000).onAir?.remaining).toEqual({ kind: 'frozen', remainingMs: 100_000, source: 'measured' });
+  });
+});
+
+describe('delay source', () => {
+  it('follows the block anchor: planned when started by time, estimated while OBS is lost', () => {
+    const byTime = run(liveState(), { type: 'Goto', at: T0 + 900_000, slot: 6 }, { type: 'Tick', at: T0 + 1_500_000 });
+    expect(computeTiming(byTime, T0 + 1_600_000).delay).toEqual({ ms: 0, source: 'planned' });
+    const lost = run(liveState(), { type: 'SourceLost', at: T0 + 1 });
+    expect(computeTiming(lost, T0 + 750_000).delay).toEqual({ ms: 30_000, source: 'estimated' });
   });
 });
