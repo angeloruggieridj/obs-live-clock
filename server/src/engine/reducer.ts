@@ -198,16 +198,20 @@ function applyCommand(s: LiveState, c: Command): boolean {
       startProgram(s, c.at);
       return true;
 
-    case 'Next':
-      if (s.phase !== 'live' || s.cursor + 1 >= s.slots.length) return false;
+    case 'Next': {
+      if (s.phase !== 'live') return false;
+      let target = position(s) + 1;
+      while (target < s.slots.length && s.slotRt[target]!.status === 'dropped') target++;
+      if (target >= s.slots.length) return false;
       if (s.returnSlot !== null) {
         closeSlot(s, s.cursor, c.at);
         s.cursor = s.returnSlot;
         s.returnSlot = null;
       }
-      moveTo(s, s.cursor + 1, c.at);
+      moveTo(s, target, c.at);
       operatorMoved(s);
       return true;
+    }
 
     case 'Prev':
       if (s.phase !== 'live' || s.cursor <= 0) return false;
@@ -217,6 +221,7 @@ function applyCommand(s: LiveState, c: Command): boolean {
 
     case 'Goto':
       if (s.phase !== 'live' || c.slot < 0 || c.slot >= s.slots.length || c.slot === s.cursor) return false;
+      if (s.slotRt[c.slot]!.status === 'dropped') return false;
       if (c.slot > s.cursor) {
         s.returnSlot = null;
         moveTo(s, c.slot, c.at);

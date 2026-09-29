@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import { describe, expect, it } from 'vitest';
 import { nextTickAt, reduce } from '../../src/engine/reducer';
+import { SOLO_FUTSAL_DECK } from '@olc/shared/testing';
 import { T0, freshState, liveState, run } from '../helpers';
 
 describe('StartProgram', () => {
@@ -27,6 +28,26 @@ describe('Next / Prev / Goto', () => {
     expect(s.blockRt[2]!.startedAt).toBe(T0 + 1_000);
     expect(reduce(s, { type: 'Goto', at: T0 + 2_000, slot: 99 }).changed).toBe(false);
     expect(reduce(s, { type: 'Goto', at: T0 + 2_000, slot: 4 }).changed).toBe(false);
+  });
+
+  it('Next skips dropped slots and is a no-op at the end of the rundown', () => {
+    const s = run(
+      liveState(),
+      { type: 'DeckPlaylistChanged', at: T0 + 1_000, items: [{ ...SOLO_FUTSAL_DECK[0]! }] }, // Servizio 2 dropped
+      { type: 'Goto', at: T0 + 900_000, slot: 4 },
+    );
+    const next = run(s, { type: 'Next', at: T0 + 901_000 });
+    expect(next.cursor).toBe(6);
+    expect(next.slotRt[5]!.status).toBe('dropped');
+    const end = run(liveState(), { type: 'Goto', at: T0 + 1_500_000, slot: 7 });
+    expect(reduce(end, { type: 'Next', at: T0 + 1_501_000 }).changed).toBe(false);
+  });
+
+  it('Goto rejects a dropped slot', () => {
+    const s = run(liveState(), { type: 'DeckPlaylistChanged', at: T0 + 1_000, items: [{ ...SOLO_FUTSAL_DECK[0]! }] });
+    const r = reduce(s, { type: 'Goto', at: T0 + 2_000, slot: 5 });
+    expect(r.changed).toBe(false);
+    expect(r.state.cursor).toBe(0);
   });
 
   it('is ignored outside live', () => {
