@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import { closeSlot, correctTo, moveTo } from './cursor';
-import { match } from './matcher';
+import { match, slotMatches } from './matcher';
 import { currentBlockIndex, firstSlotOfBlock, lastBlockIndex, resolveDeckIndex } from './rundown';
 import { blockEndsAt } from './timing';
 import type { Command, DecisionKind, DomainEvent, EngineInput, LiveState, MonoMs } from './types';
@@ -265,11 +265,39 @@ function applyTick(s: LiveState, at: MonoMs): boolean {
       const end = bi >= 0 ? blockEndsAt(s, bi) : null;
       if (end === null || at < end || bi >= lastBlockIndex(s)) break;
       s.returnSlot = null;
-      moveTo(s, firstSlotOfBlock(s, bi + 1), end);
+      moveTo(s, firstSlotOfBlock(s, bi + 1), end, 'time');
+      changed = true;
+    }
+  } else if (canMatch(s)) {
+    for (;;) {
+      const h = studioHandOver(s);
+      if (h === null || at < h.at) break;
+      moveTo(s, h.next, h.at, 'time');
       changed = true;
     }
   }
   return changed;
+}
+
+/**
+ * Hand-over between adjacent studio blocks that share the scene group on Program: no OBS event will ever
+ * mark the boundary, so the next block starts when the current block's target expires. Returns the slot
+ * to enter and when, or null when the boundary is observable (or the block is not started).
+ */
+function studioHandOver(s: LiveState): { next: number; at: MonoMs } | null {
+  if (s.cursor < 0 || s.returnSlot !== null) return null;
+  const cur = s.slots[s.cursor]!;
+  if (cur.kind !== 'studio') return null;
+  const end = blockEndsAt(s, cur.blockIndex);
+  if (end === null) return null;
+  let next = s.cursor + 1;
+  while (next < s.slots.length && s.slotRt[next]!.status === 'dropped') next++;
+  const slot = s.slots[next];
+  if (slot === undefined || slot.kind !== 'studio' || slot.blockIndex <= cur.blockIndex) return null;
+  const scene = s.program.scene;
+  if (scene === null || !slotMatches(s, slot, { kind: 'studio', scene })) return null;
+  // Never close the current slot before it was entered (it may have been entered after the block expired).
+  return { next, at: Math.max(end, s.slotRt[s.cursor]!.startedAt ?? end) };
 }
 
 export function nextTickAt(s: LiveState): MonoMs | null {
@@ -279,6 +307,9 @@ export function nextTickAt(s: LiveState): MonoMs | null {
     const bi = currentBlockIndex(s);
     const end = bi >= 0 && bi < lastBlockIndex(s) ? blockEndsAt(s, bi) : null;
     if (end !== null) candidates.push(end);
+  } else if (canMatch(s)) {
+    const h = studioHandOver(s);
+    if (h !== null) candidates.push(h.at);
   }
   return candidates.length === 0 ? null : Math.min(...candidates);
 }

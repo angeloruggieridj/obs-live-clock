@@ -108,3 +108,43 @@ describe('estimated mode (OBS lost)', () => {
     expect(nextTickAt(liveState())).toBeNull();
   });
 });
+
+describe('time-based hand-over between adjacent studio blocks (OBS connected)', () => {
+  const inBlock2Tail = () => {
+    const s = run(liveState(), { type: 'Goto', at: T0 + 900_000, slot: 6 });
+    expect(s.blockRt[2]!.startedAt).toBe(T0 + 900_000);
+    return s;
+  };
+
+  it('schedules and performs the hand-over at the block end, marking the new block as started by time', () => {
+    const s = inBlock2Tail();
+    expect(nextTickAt(s)).toBe(T0 + 1_500_000);
+    expect(reduce(s, { type: 'Tick', at: T0 + 1_499_999 }).changed).toBe(false);
+    const after = run(s, { type: 'Tick', at: T0 + 1_510_000 });
+    expect(after.cursor).toBe(7);
+    expect(after.slotRt[6]).toMatchObject({ status: 'done', endedAt: T0 + 1_500_000 });
+    expect(after.blockRt[3]).toMatchObject({ startedAt: T0 + 1_500_000, startedBy: 'time', targetMs: 120_000 });
+    expect(after.blockRt[2]).toMatchObject({ endedAt: T0 + 1_500_000, startedBy: 'obs' });
+    expect(nextTickAt(after)).toBeNull();
+  });
+
+  it('does not hand over when the next slot is observable (media) or Program is not in the next group', () => {
+    const s = run(liveState(), { type: 'Tick', at: T0 + 800_000 });
+    expect(s.cursor).toBe(0);
+    const offGroup = run(inBlock2Tail(), { type: 'ProgramSceneChanged', at: T0 + 1_000_000, scene: 'GRAFICA', deckOnProgram: false });
+    expect(nextTickAt(offGroup)).toBeNull();
+    expect(run(offGroup, { type: 'Tick', at: T0 + 1_600_000 }).cursor).toBe(6);
+  });
+
+  it('does not hand over in manual control', () => {
+    const s = run(inBlock2Tail(), { type: 'SetControl', at: T0 + 1_000_000, control: 'manual' });
+    expect(run(s, { type: 'Tick', at: T0 + 1_600_000 }).cursor).toBe(6);
+  });
+
+  it('estimated-mode hand-overs are also marked as started by time', () => {
+    const s = run(liveState(), { type: 'SourceLost', at: T0 + 100_000 }, { type: 'Tick', at: T0 + 950_000 });
+    expect(s.blockRt[1]!.startedBy).toBe('time');
+    expect(s.blockRt[2]!.startedBy).toBe('time');
+    expect(s.blockRt[0]!.startedBy).toBe('obs');
+  });
+});

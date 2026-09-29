@@ -66,7 +66,7 @@ describe('blockEndsAt', () => {
   it('is start + target once started, null otherwise', () => {
     const s = started();
     expect(blockEndsAt(s, 0)).toBeNull();
-    s.blockRt[0] = { startedAt: T0, endedAt: null, adjustMs: 0, targetMs: 720_000 };
+    s.blockRt[0] = { startedAt: T0, endedAt: null, adjustMs: 0, targetMs: 720_000, startedBy: 'obs' };
     expect(blockEndsAt(s, 0)).toBe(T0 + 720_000);
   });
 });

@@ -88,7 +88,14 @@ export interface BlockRuntime {
   adjustMs: number;
   /** Duration the presenter works to, fixed when the block starts (includes recovery and adjustments). */
   targetMs: number | null;
+  /**
+   * What started the block: an observed OBS event or an operator command ('obs'), or the clock alone
+   * ('time': tick hand-over, estimated mode). null while not started. Only 'obs' starts are measured.
+   */
+  startedBy: BlockStart | null;
 }
+
+export type BlockStart = 'obs' | 'time';
 
 export interface ActiveMessage {
   text: string;

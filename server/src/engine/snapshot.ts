@@ -96,6 +96,8 @@ export function computeTiming(s: LiveState, nowIn: MonoMs): TimingSnapshot {
   const last = lastBlockIndex(s);
   const programPlannedEnd = plannedEndAt(s, last)!;
   const endsAt = bi >= 0 ? blockEndsAt(s, bi) : null;
+  // A block start is measured only when OBS (or the operator) marked it; a start by time is the plan.
+  const blockSource: Source = bi >= 0 && s.blockRt[bi]!.startedBy === 'obs' ? 'measured' : 'planned';
 
   let delayMs: number | null = null;
   let forecast: Remaining | null = null;
@@ -138,7 +140,7 @@ export function computeTiming(s: LiveState, nowIn: MonoMs): TimingSnapshot {
 
   return {
     blockIndex: bi,
-    block: finalize(endsAt === null ? null : running(endsAt, 'measured'), frozenAt, lost),
+    block: finalize(endsAt === null ? null : running(endsAt, blockSource), frozenAt, lost),
     delayMs,
     plannedEndAt: programPlannedEnd,
     forecast: finalize(forecast, frozenAt, lost),

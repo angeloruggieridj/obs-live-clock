@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import { currentBlockIndex } from './rundown';
 import { targetForBlockStart } from './timing';
-import type { LiveState, MonoMs } from './types';
+import type { BlockStart, LiveState, MonoMs } from './types';
 
-export function startBlock(s: LiveState, blockIndex: number, at: MonoMs): void {
+export function startBlock(s: LiveState, blockIndex: number, at: MonoMs, by: BlockStart = 'obs'): void {
   const rt = s.blockRt[blockIndex]!;
   if (rt.startedAt !== null) return;
   rt.startedAt = at;
+  rt.startedBy = by;
   rt.endedAt = null;
   rt.targetMs = targetForBlockStart(s, blockIndex, at);
 }
@@ -26,8 +27,11 @@ export function closeSlot(s: LiveState, index: number, at: MonoMs): void {
   rt.endedAt = at;
 }
 
-/** Advance the cursor forward to `target`. Skipped slots are closed (studio) or postponed (media, break). */
-export function moveTo(s: LiveState, target: number, at: MonoMs): void {
+/**
+ * Advance the cursor forward to `target`. Skipped slots are closed (studio) or postponed (media, break).
+ * `by` records what started a newly entered block ('time' for clock-driven hand-overs).
+ */
+export function moveTo(s: LiveState, target: number, at: MonoMs, by: BlockStart = 'obs'): void {
   const from = s.cursor;
   closeSlot(s, from, at);
   for (let j = from + 1; j < target; j++) {
@@ -44,7 +48,7 @@ export function moveTo(s: LiveState, target: number, at: MonoMs): void {
       const rt = s.blockRt[b]!;
       if (rt.startedAt !== null && rt.endedAt === null) rt.endedAt = at;
     }
-    startBlock(s, blockIndex, at);
+    startBlock(s, blockIndex, at, by);
   }
   if (s.slots[target]!.kind === 'break') s.media = null;
   s.cursor = target;
@@ -63,7 +67,7 @@ export function correctTo(s: LiveState, index: number, at: MonoMs): void {
   }
   const blockIndex = s.slots[index]!.blockIndex;
   for (let b = blockIndex + 1; b < s.blockRt.length; b++) {
-    s.blockRt[b] = { ...s.blockRt[b]!, startedAt: null, endedAt: null, targetMs: null };
+    s.blockRt[b] = { ...s.blockRt[b]!, startedAt: null, endedAt: null, targetMs: null, startedBy: null };
   }
   s.blockRt[blockIndex]!.endedAt = null;
   const rt = s.slotRt[index]!;

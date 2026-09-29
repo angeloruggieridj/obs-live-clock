@@ -115,3 +115,37 @@ describe('Out-of-order service (Servizio 1 aired in block 2)', () => {
     expect(back.slotRt[1]!.status).toBe('done');
   });
 });
+
+describe('Golden path — adjacent studio blocks hand over by time and REC stop ends the program', () => {
+  it('holds', () => {
+    const scene = (at: number, name: string, deckOnProgram = false) =>
+      ({ type: 'ProgramSceneChanged', at: T0 + at, scene: name, deckOnProgram }) as const;
+    let s = run(
+      liveState(),
+      scene(100_000, 'CAM 2'),
+      { type: 'DeckItemStarted', at: T0 + 200_000, index: 0, path: 'D:/media/servizio1.mp4', title: 'Servizio 1', durationMs: 185_000 },
+      scene(200_000, 'PLAYOUT', true),
+      scene(385_000, 'CAM 1'),
+      scene(720_000, 'BREAK'),
+      scene(900_000, 'CAM 3'),
+      { type: 'DeckItemStarted', at: T0 + 1_100_000, index: 1, path: 'D:/media/servizio2.mp4', title: 'Servizio 2', durationMs: 120_000 },
+      scene(1_100_000, 'PLAYOUT', true),
+      scene(1_220_000, 'CAM 2'),
+    );
+    expect(s.cursor).toBe(6);
+    expect(s.blockRt[2]!.startedAt).toBe(T0 + 900_000);
+
+    // Block 2 target expires at 900 000 + 600 000: nothing observable marks the boundary, time hands over.
+    s = run(s, { type: 'Tick', at: T0 + 1_500_000 });
+    expect(s.cursor).toBe(7);
+    const v = presenterView(s, T0 + 1_500_001, toWall);
+    expect(v.block).toMatchObject({ index: 3, name: 'Chiusura', anchor: { kind: 'countdown', source: 'planned' } });
+
+    s = run(s, { type: 'Tick', at: T0 + 1_625_000 });
+    expect(computeTiming(s, T0 + 1_625_000).rundownFinished).toBe(true);
+
+    s = run(s, { type: 'OutputChanged', at: T0 + 1_625_000, output: 'rec', state: 'stopped' });
+    expect(s.phase).toBe('ended');
+    expect(s.decisions.filter((d) => !d.confirmed)).toEqual([]);
+  });
+});

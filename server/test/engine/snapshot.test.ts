@@ -107,3 +107,12 @@ describe('computeTiming', () => {
     expect(t.returnAt).toEqual({ kind: 'running', endsAt: T0 + 1_085_000, source: 'measured' });
   });
 });
+
+describe('block countdown source', () => {
+  it('is planned for a block started by time, measured for one started by OBS', () => {
+    const s = run(liveState(), { type: 'Goto', at: T0 + 900_000, slot: 6 }, { type: 'Tick', at: T0 + 1_500_000 });
+    expect(computeTiming(s, T0 + 1_500_001).block).toEqual({ kind: 'running', endsAt: T0 + 1_620_000, source: 'planned' });
+    const lost = run(s, { type: 'SourceLost', at: T0 + 1_500_002 });
+    expect(computeTiming(lost, T0 + 1_500_003).block?.source).toBe('estimated');
+  });
+});
