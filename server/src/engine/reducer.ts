@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-import { closeSlot, moveTo } from './cursor';
+import { closeSlot, correctTo, moveTo } from './cursor';
 import { match } from './matcher';
-import { currentBlockIndex, lastBlockIndex, resolveDeckIndex } from './rundown';
-import type { DecisionKind, DomainEvent, EngineInput, LiveState, MonoMs } from './types';
+import { currentBlockIndex, firstSlotOfBlock, lastBlockIndex, resolveDeckIndex } from './rundown';
+import { blockEndsAt } from './timing';
+import type { Command, DecisionKind, DomainEvent, EngineInput, LiveState, MonoMs } from './types';
 
 export interface ReduceResult {
   state: LiveState;
@@ -27,8 +28,10 @@ function apply(s: LiveState, input: EngineInput): boolean {
     case 'SourceLost':
     case 'SourceRestored':
       return applyEvent(s, input);
+    case 'Tick':
+      return applyTick(s, input.at);
     default:
-      return false; // commands and ticks: Task 8
+      return applyCommand(s, input);
   }
 }
 
@@ -175,4 +178,107 @@ function onOutput(s: LiveState, e: Extract<DomainEvent, { type: 'OutputChanged' 
       resumeFromPause(s, e.at);
       return true;
   }
+}
+
+function applyCommand(s: LiveState, c: Command): boolean {
+  switch (c.type) {
+    case 'StartProgram':
+      if (s.phase !== 'preshow') return false;
+      startProgram(s, c.at);
+      return true;
+
+    case 'Next':
+      if (s.phase !== 'live' || s.cursor + 1 >= s.slots.length) return false;
+      if (s.returnSlot !== null) {
+        closeSlot(s, s.cursor, c.at);
+        s.cursor = s.returnSlot;
+        s.returnSlot = null;
+      }
+      moveTo(s, s.cursor + 1, c.at);
+      return true;
+
+    case 'Prev':
+      if (s.phase !== 'live' || s.cursor <= 0) return false;
+      correctTo(s, s.cursor - 1, c.at);
+      return true;
+
+    case 'Goto':
+      if (s.phase !== 'live' || c.slot < 0 || c.slot >= s.slots.length || c.slot === s.cursor) return false;
+      if (c.slot > s.cursor) {
+        s.returnSlot = null;
+        moveTo(s, c.slot, c.at);
+      } else {
+        correctTo(s, c.slot, c.at);
+      }
+      return true;
+
+    case 'Adjust': {
+      const bi = currentBlockIndex(s);
+      if (s.phase !== 'live' || bi < 0 || c.deltaMs === 0) return false;
+      const rt = s.blockRt[bi]!;
+      rt.adjustMs += c.deltaMs;
+      if (rt.targetMs !== null) rt.targetMs += c.deltaMs;
+      return true;
+    }
+
+    case 'SetControl':
+      if (s.control === c.control) return false;
+      s.control = c.control;
+      if (c.control === 'auto' && s.phase === 'live') match(s, c.at);
+      return true;
+
+    case 'SendMessage':
+      s.message = {
+        text: c.text,
+        shownAt: c.at,
+        expiresAt: c.dismiss.kind === 'timeout' ? c.at + c.dismiss.ms : null,
+      };
+      return true;
+
+    case 'ClearMessage':
+      if (s.message === null) return false;
+      s.message = null;
+      return true;
+
+    case 'ResolveDecision': {
+      const d = s.decisions.find((x) => x.id === c.id);
+      if (d === undefined) return false;
+      d.choice = c.choice;
+      d.confirmed = true;
+      if (d.kind === 'all_outputs_stopped' && c.choice === 'end' && s.phase === 'live') endProgram(s, c.at);
+      return true;
+    }
+  }
+}
+
+const estimating = (s: LiveState) => s.phase === 'live' && s.obs === 'lost' && s.control === 'auto';
+
+function applyTick(s: LiveState, at: MonoMs): boolean {
+  let changed = false;
+  if (s.message !== null && s.message.expiresAt !== null && at >= s.message.expiresAt) {
+    s.message = null;
+    changed = true;
+  }
+  if (estimating(s)) {
+    for (;;) {
+      const bi = currentBlockIndex(s);
+      const end = bi >= 0 ? blockEndsAt(s, bi) : null;
+      if (end === null || at < end || bi >= lastBlockIndex(s)) break;
+      s.returnSlot = null;
+      moveTo(s, firstSlotOfBlock(s, bi + 1), end);
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+export function nextTickAt(s: LiveState): MonoMs | null {
+  const candidates: MonoMs[] = [];
+  if (s.message !== null && s.message.expiresAt !== null) candidates.push(s.message.expiresAt);
+  if (estimating(s)) {
+    const bi = currentBlockIndex(s);
+    const end = bi >= 0 && bi < lastBlockIndex(s) ? blockEndsAt(s, bi) : null;
+    if (end !== null) candidates.push(end);
+  }
+  return candidates.length === 0 ? null : Math.min(...candidates);
 }

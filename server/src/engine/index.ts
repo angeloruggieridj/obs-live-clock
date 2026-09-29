@@ -3,4 +3,4 @@ export const ENGINE_VERSION = 1;
 
 export * from './types';
 export { createLiveState } from './state';
-export { reduce, type ReduceResult } from './reducer';
+export { nextTickAt, reduce, type ReduceResult } from './reducer';
