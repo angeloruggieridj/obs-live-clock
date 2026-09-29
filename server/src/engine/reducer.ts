@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-import { closeSlot, correctTo, moveTo } from './cursor';
+import { clearAmbiguity, closeSlot, correctTo, moveTo } from './cursor';
 import { match, slotMatches } from './matcher';
 import { currentBlockIndex, firstSlotOfBlock, lastBlockIndex, resolveDeckIndex } from './rundown';
 import { blockEndsAt } from './timing';
@@ -40,9 +40,13 @@ const canMatch = (s: LiveState) => s.phase === 'live' && s.control === 'auto';
 /** Where the show is in the rundown: the interrupted slot during an out-of-order excursion. */
 const position = (s: LiveState) => s.returnSlot ?? s.cursor;
 
-/** An operator move while OBS is lost is authoritative: it becomes the non-provisional position. */
+/**
+ * An operator move is a real observation: it becomes the non-provisional position while OBS is lost, and it
+ * always resolves any outstanding ambiguity (a manual command counts as OBS showing something recognisable).
+ */
 function operatorMoved(s: LiveState): void {
   if (s.preLossCursor !== null) s.preLossCursor = position(s);
+  clearAmbiguity(s);
 }
 
 function applyEvent(s: LiveState, e: DomainEvent): boolean {
@@ -288,9 +292,14 @@ function applyTick(s: LiveState, at: MonoMs): boolean {
       const target = firstSlotOfBlock(s, bi + 1);
       s.returnSlot = null;
       moveTo(s, target, end, 'time');
-      // Nothing between `from` and `target` was actually observed: the clock alone decided it. Mark it
-      // provisional so a later restore can tell a real observation from a guess (see matcher.ts resync()).
-      for (let k = Math.max(0, from); k <= target; k++) s.slotRt[k]!.provisional = true;
+      // Nothing after `from` was actually observed: the clock alone decided it. Mark it provisional so a
+      // later restore can tell a real observation from a guess (see matcher.ts resync()). `from` itself is
+      // excluded: it was wherever OBS (or an operator) last really put the show, only its end is a guess.
+      // A slot already `dropped` was never really part of the guess either (skipping it is an operator
+      // decision, via the playlist) and must stay eligible for the ordinary out-of-order excursion path.
+      for (let k = from + 1; k <= target; k++) {
+        if (s.slotRt[k]!.status !== 'dropped') s.slotRt[k]!.provisional = true;
+      }
       changed = true;
     }
   } else if (canMatch(s)) {

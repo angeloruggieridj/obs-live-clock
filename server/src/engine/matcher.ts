@@ -73,18 +73,36 @@ function resync(s: LiveState, at: MonoMs): void {
       break;
     }
   }
+  // Only ever SET ambiguity here, never clear it: an unresolved gap from an earlier outage is not resolved
+  // just because this outage's own (possibly shorter) gap happens to be clean. Only an actual observation —
+  // a media/break match, a correction, or an operator command — earns that.
   if (ambiguous) s.ambiguous = true;
-  else clearAmbiguity(s);
+}
+
+/** Whether `index` is the first slot of its block that is not `dropped`: the one that actually opens it. */
+function opensBlock(s: LiveState, index: number): boolean {
+  const blockIndex = s.slots[index]!.blockIndex;
+  for (const slot of s.slots) {
+    if (slot.blockIndex !== blockIndex) continue;
+    if (s.slotRt[slot.index]!.status === 'dropped') continue;
+    return slot.index === index;
+  }
+  return false;
 }
 
 /**
  * A slot the estimating loop guessed its way through (never observed) can still match the target during the
  * backward search: unlike a genuine out-of-order excursion, this is a correction to the truth, not a detour
- * from it, so the block it belongs to restarts fresh as observed ('obs') rather than keeping its guessed start.
+ * from it. Its block restarts fresh as observed ('obs') only when this slot is what actually opens the block
+ * (a break, or the first non-dropped slot of a studio block) — otherwise the block was already legitimately
+ * started (by OBS or by an earlier, still-valid time hand-over) and correctTo()'s guarded startBlock leaves
+ * that start alone.
  */
 function correctProvisional(s: LiveState, index: number, at: MonoMs): void {
-  const blockIndex = s.slots[index]!.blockIndex;
-  s.blockRt[blockIndex] = { ...s.blockRt[blockIndex]!, startedAt: null, endedAt: null, targetMs: null, startedBy: null };
+  const slot = s.slots[index]!;
+  if (slot.kind === 'break' || opensBlock(s, index)) {
+    s.blockRt[slot.blockIndex] = { ...s.blockRt[slot.blockIndex]!, startedAt: null, endedAt: null, targetMs: null, startedBy: null };
+  }
   s.slotRt[index] = { status: 'pending', startedAt: null, endedAt: null, provisional: false };
   correctTo(s, index, at);
 }

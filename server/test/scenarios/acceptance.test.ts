@@ -357,6 +357,156 @@ describe('OBS drop near a block end: estimated hand-overs are provisional', () =
   });
 });
 
+describe('Round 3 — a provisional correction never invents an already-started block, and ambiguity is sticky', () => {
+  const goldenPrefixToCam1At385 = () =>
+    run(
+      liveState(),
+      { type: 'ProgramSceneChanged', at: T0 + 100_000, scene: 'CAM 2', deckOnProgram: false },
+      { type: 'DeckItemStarted', at: T0 + 200_000, index: 0, path: 'D:/media/servizio1.mp4', title: 'Servizio 1', durationMs: 185_000 },
+      { type: 'ProgramSceneChanged', at: T0 + 200_000, scene: 'PLAYOUT', deckOnProgram: true },
+      { type: 'ProgramSceneChanged', at: T0 + 385_000, scene: 'CAM 1', deckOnProgram: false },
+    );
+
+  it('P1: a media correction never invents a start for a block already observed as started', () => {
+    let s = run(liveState(), { type: 'SourceLost', at: T0 + 150_000 });
+    expect(s.cursor).toBe(0);
+
+    s = run(s, { type: 'Tick', at: T0 + 905_000 });
+    s = run(
+      s,
+      { type: 'SourceRestored', at: T0 + 905_000 },
+      { type: 'ProgramSceneChanged', at: T0 + 905_000, scene: 'CAM 2', deckOnProgram: false },
+    );
+    expect(s.cursor).toBe(4);
+    expect(s.ambiguous).toBe(true);
+    expect(s.slotRt[1]).toMatchObject({ status: 'postponed', provisional: true });
+
+    s = run(
+      s,
+      { type: 'DeckItemStarted', at: T0 + 950_000, index: 0, path: 'D:/media/servizio1.mp4', title: 'Servizio 1', durationMs: 185_000 },
+      { type: 'ProgramSceneChanged', at: T0 + 950_000, scene: 'PLAYOUT', deckOnProgram: true },
+    );
+    expect(s.cursor).toBe(1);
+    expect(s.ambiguous).toBe(false);
+    // Block 0 was really started by OBS at T0: the correction must not re-invent that as a fresh 'obs' start.
+    expect(s.blockRt[0]).toMatchObject({ startedAt: T0, startedBy: 'obs' });
+    const t = computeTiming(s, T0 + 950_000);
+    expect(t.blockIndex).toBe(0);
+    expect(t.block).toMatchObject({ endsAt: T0 + 720_000 }); // in the past: block 0 is overrunning
+  });
+
+  it('P5: a media correction that does not open its block keeps the block\u2019s existing time start', () => {
+    let s = goldenPrefixToCam1At385();
+    expect(s.cursor).toBe(2);
+
+    s = run(s, { type: 'SourceLost', at: T0 + 700_000 }, { type: 'Tick', at: T0 + 1_520_000 });
+    expect(s.cursor).toBe(7); // estimated all the way to Chiusura
+
+    s = run(
+      s,
+      { type: 'SourceRestored', at: T0 + 1_520_000 },
+      { type: 'ProgramSceneChanged', at: T0 + 1_520_000, scene: 'CAM 1', deckOnProgram: false },
+    );
+    expect(s.cursor).toBe(7);
+    expect(s.ambiguous).toBe(true);
+
+    s = run(
+      s,
+      { type: 'DeckItemStarted', at: T0 + 1_540_000, index: 1, path: 'D:/media/servizio2.mp4', title: 'Servizio 2', durationMs: 120_000 },
+      { type: 'ProgramSceneChanged', at: T0 + 1_540_000, scene: 'PLAYOUT', deckOnProgram: true },
+    );
+    expect(s.cursor).toBe(5);
+    expect(s.ambiguous).toBe(false);
+    // Block 2 was already legitimately time-started: the correction must keep that start, not re-invent it.
+    expect(s.blockRt[2]).toMatchObject({ startedAt: T0 + 900_000, startedBy: 'time' });
+    expect(s.blockRt[3]).toMatchObject({ startedAt: null, startedBy: null }); // un-started: it follows the cursor
+    expect(computeTiming(s, T0 + 1_540_000).blockIndex).toBe(2);
+  });
+
+  it('P2: a second, clean outage never clears an unresolved ambiguity left by an earlier one', () => {
+    let s = goldenPrefixToCam1At385();
+    s = run(s, { type: 'SourceLost', at: T0 + 700_000 }, { type: 'Tick', at: T0 + 950_000 });
+    s = run(
+      s,
+      { type: 'SourceRestored', at: T0 + 950_000 },
+      { type: 'ProgramSceneChanged', at: T0 + 950_000, scene: 'CAM 1', deckOnProgram: false },
+    );
+    expect(s.cursor).toBe(4);
+    expect(s.ambiguous).toBe(true); // the break behind this position was only ever guessed at
+
+    s = run(s, { type: 'DeckPlaylistChanged', at: T0 + 965_000, items: [{ ...SOLO_FUTSAL_DECK[0]! }] });
+    expect(s.slotRt[5]!.status).toBe('dropped');
+
+    s = run(s, { type: 'SourceLost', at: T0 + 970_000 }, { type: 'Tick', at: T0 + 1_600_000 });
+    expect(s.cursor).toBe(7); // estimated on to Chiusura during this second outage
+
+    s = run(
+      s,
+      { type: 'SourceRestored', at: T0 + 1_600_000 },
+      { type: 'ProgramSceneChanged', at: T0 + 1_600_000, scene: 'CAM 2', deckOnProgram: false },
+    );
+    expect(s.cursor).toBe(7);
+    // This outage's own gap (studio + dropped media only) is clean, but the FIRST outage's break is still
+    // unresolved: the ambiguity must not be wiped just because this restore's local check came back clean.
+    expect(s.ambiguous).toBe(true);
+
+    s = run(s, { type: 'ProgramSceneChanged', at: T0 + 1_610_000, scene: 'BREAK', deckOnProgram: false });
+    expect(s.cursor).toBe(3);
+    expect(s.ambiguous).toBe(false);
+    expect(s.blockRt[1]).toMatchObject({ startedAt: T0 + 1_610_000, startedBy: 'obs' });
+  });
+
+  it('P3: an operator Goto after an ambiguous restore counts as an observation', () => {
+    let s = run(
+      liveState(),
+      { type: 'SourceLost', at: T0 + 600_000 },
+      { type: 'Tick', at: T0 + 1_000_000 },
+    );
+    s = run(
+      s,
+      { type: 'SourceRestored', at: T0 + 1_000_000 },
+      { type: 'ProgramSceneChanged', at: T0 + 1_000_000, scene: 'CAM 2', deckOnProgram: false },
+    );
+    expect(s.cursor).toBe(4);
+    expect(s.ambiguous).toBe(true);
+
+    s = run(s, { type: 'Goto', at: T0 + 1_010_000, slot: 6 });
+    expect(s.cursor).toBe(6);
+    expect(s.ambiguous).toBe(false);
+    expect(computeTiming(s, T0 + 1_010_001).block?.source).not.toBe('estimated');
+  });
+
+  it('P4: a dropped-then-re-added media is an ordinary out-of-order excursion, not a provisional correction', () => {
+    let s = goldenPrefixToCam1At385();
+    s = run(s, { type: 'DeckPlaylistChanged', at: T0 + 690_000, items: [{ ...SOLO_FUTSAL_DECK[0]! }] });
+    expect(s.slotRt[5]!.status).toBe('dropped'); // Servizio 2 dropped before the outage begins
+
+    s = run(s, { type: 'SourceLost', at: T0 + 700_000 }, { type: 'Tick', at: T0 + 1_520_000 });
+    expect(s.cursor).toBe(7);
+
+    s = run(
+      s,
+      { type: 'SourceRestored', at: T0 + 1_520_000 },
+      { type: 'ProgramSceneChanged', at: T0 + 1_520_000, scene: 'CAM 1', deckOnProgram: false },
+    );
+    expect(s.cursor).toBe(7);
+    expect(s.ambiguous).toBe(true);
+
+    s = run(s, { type: 'DeckPlaylistChanged', at: T0 + 1_530_000, items: SOLO_FUTSAL_DECK.map((i) => ({ ...i })) });
+    expect(s.slotRt[5]!.status).toBe('postponed'); // re-added behind the show: an ordinary skipped item
+
+    s = run(
+      s,
+      { type: 'DeckItemStarted', at: T0 + 1_540_000, index: 1, path: 'D:/media/servizio2.mp4', title: 'Servizio 2', durationMs: 120_000 },
+      { type: 'ProgramSceneChanged', at: T0 + 1_540_000, scene: 'PLAYOUT', deckOnProgram: true },
+    );
+    expect(s.cursor).toBe(5);
+    expect(s.returnSlot).toBe(7); // an out-of-order excursion, not a correction back into block 2
+    expect(s.ambiguous).toBe(false);
+    expect(s.blockRt[3]).toMatchObject({ startedAt: T0 + 1_500_000, startedBy: 'time' }); // block 3 stays started
+  });
+});
+
 describe('Brief cutaway to studio during a clip', () => {
   const onAir = () =>
     run(
