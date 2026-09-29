@@ -97,6 +97,16 @@ describe('playlist changes', () => {
     expect(back.slotRt[5]!.status).toBe('pending');
   });
 
+  it('a re-added clip behind the cursor goes back to postponed, not pending', () => {
+    const skipped = run(liveState(), { type: 'ProgramSceneChanged', at: T0 + 700_000, scene: 'BREAK', deckOnProgram: false });
+    expect(skipped.slotRt[1]!.status).toBe('postponed');
+    const removed = run(skipped, { type: 'DeckPlaylistChanged', at: T0 + 701_000, items: [{ ...SOLO_FUTSAL_DECK[1]!, index: 0 }] });
+    expect(removed.slotRt[1]!.status).toBe('dropped');
+    const back = run(removed, { type: 'DeckPlaylistChanged', at: T0 + 702_000, items: SOLO_FUTSAL_DECK.map((i) => ({ ...i })) });
+    expect(back.slotRt[1]!.status).toBe('postponed');
+    expect(back.slotRt[5]!.status).toBe('pending');
+  });
+
   it('never drops a slot that is already on air or done', () => {
     const s = run(
       liveState(),

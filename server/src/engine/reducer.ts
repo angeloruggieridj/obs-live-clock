@@ -110,7 +110,8 @@ function reconcileDropped(s: LiveState): void {
     if (rt.status === 'onair' || rt.status === 'done') continue;
     const found = resolveDeckIndex(s.deck.items, slot) !== null;
     if (!found) rt.status = 'dropped';
-    else if (rt.status === 'dropped') rt.status = 'pending';
+    // Found again: behind the show it is a skipped item (postponed), ahead of it still to come.
+    else if (rt.status === 'dropped') rt.status = slot.index < position(s) ? 'postponed' : 'pending';
   }
 }
 
