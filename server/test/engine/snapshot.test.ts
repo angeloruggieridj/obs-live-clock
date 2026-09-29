@@ -90,4 +90,20 @@ describe('computeTiming', () => {
     expect(t.rundownFinished).toBe(true);
     expect(t.delayMs).toBe(80_000);
   });
+
+  it('out-of-order service returns to the interrupted block', () => {
+    const s = run(
+      liveState(),
+      { type: 'ProgramSceneChanged', at: T0 + 700_000, scene: 'BREAK', deckOnProgram: false }, // Servizio 1 postponed
+      { type: 'ProgramSceneChanged', at: T0 + 880_000, scene: 'CAM 1', deckOnProgram: false }, // block 2 studio, slot 4
+      { type: 'DeckItemStarted', at: T0 + 900_000, index: 0, path: 'D:/media/servizio1.mp4', title: 'Servizio 1', durationMs: 185_000 },
+      { type: 'ProgramSceneChanged', at: T0 + 900_000, scene: 'PLAYOUT', deckOnProgram: true }, // Servizio 1 out of order
+    );
+    const t = computeTiming(s, T0 + 901_000);
+    expect(t.segment).toBe('media');
+    expect(t.blockIndex).toBe(2);
+    expect(t.onAir?.slotIndex).toBe(1);
+    expect(t.returnBlockIndex).toBe(2);
+    expect(t.returnAt).toEqual({ kind: 'running', endsAt: T0 + 1_085_000, source: 'measured' });
+  });
 });
