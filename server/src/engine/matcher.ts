@@ -42,14 +42,19 @@ function markOffScript(s: LiveState, at: MonoMs): void {
 }
 
 /**
- * First match after OBS came back: hand-overs made by time during the loss were guesses, so return to
- * the pre-loss slot (un-starting the blocks started by time since) and let Program decide from there.
+ * First match after OBS came back: hand-overs made by time during the loss were guesses. If what OBS now
+ * shows still matches the provisional current slot, the guess was right: keep it (the block stays
+ * 'planned', not 'measured' — nothing was actually observed). Only when Program shows something else does
+ * the guess get discarded: return to the pre-loss slot (un-starting the blocks started by time since) and
+ * let the normal match below decide from there.
  */
 function resync(s: LiveState, at: MonoMs): void {
   const pre = s.preLossCursor;
   s.preLossCursor = null;
   s.resyncPending = false;
   if (pre === null || pre < 0 || (s.returnSlot ?? s.cursor) <= pre) return;
+  const target = classify(s);
+  if (target !== null && s.cursor >= 0 && slotMatches(s, s.slots[s.cursor]!, target)) return;
   if (s.returnSlot !== null) closeSlot(s, s.cursor, at);
   correctTo(s, pre, at);
 }

@@ -198,8 +198,39 @@ describe('OBS drop near a block end: estimated hand-overs are provisional', () =
       { type: 'ProgramSceneChanged', at: T0 + 725_000, scene: 'BREAK', deckOnProgram: false },
     );
     expect(s.cursor).toBe(3);
-    expect(s.blockRt[1]!.startedAt).toBe(T0 + 725_000); // re-started when observed, not at the invented 720 s
-    expect(s.blockRt[1]!.startedBy).toBe('obs');
+    // R1: OBS confirms the provisional position, so it is kept as-is rather than rolled back and
+    // re-matched — the block keeps its time hand-over start, not the moment it was confirmed.
+    expect(s.blockRt[1]!.startedAt).toBe(T0 + 720_000);
+    expect(s.blockRt[1]!.startedBy).toBe('time');
+  });
+
+  it('R1: a restore that confirms a provisional position past the pre-loss slot keeps it', () => {
+    let s = run(
+      liveState(),
+      { type: 'SourceLost', at: T0 + 600_000 },
+      { type: 'Tick', at: T0 + 1_000_000 },
+    );
+    expect(s.cursor).toBe(4); // estimated loop: hands over through the break into block 2 studio
+
+    s = run(
+      s,
+      { type: 'SourceRestored', at: T0 + 1_000_000 },
+      { type: 'ProgramSceneChanged', at: T0 + 1_000_000, scene: 'CAM 2', deckOnProgram: false },
+    );
+    // CAM 2 confirms the provisional block-2 studio slot: no rollback to the pre-loss block 1 slot.
+    expect(s.cursor).toBe(4);
+    expect(presenterView(s, T0 + 1_000_001, toWall).block).toMatchObject({ index: 2, anchor: { source: 'planned' } });
+    expect(s.preLossCursor).toBeNull();
+    expect(s.resyncPending).toBe(false);
+
+    s = run(
+      s,
+      { type: 'DeckItemStarted', at: T0 + 1_100_000, index: 1, path: 'D:/media/servizio2.mp4', title: 'Servizio 2', durationMs: 120_000 },
+      { type: 'ProgramSceneChanged', at: T0 + 1_100_000, scene: 'PLAYOUT', deckOnProgram: true },
+    );
+    expect(s.cursor).toBe(5);
+    // The break aired by time while OBS was lost: it is 'done', not 'postponed' by a rollback that never happened.
+    expect(s.slotRt[3]!.status).toBe('done');
   });
 
   it('an operator command during the loss is not undone by the restore', () => {
