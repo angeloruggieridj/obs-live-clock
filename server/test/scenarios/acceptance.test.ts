@@ -161,6 +161,52 @@ describe('Golden path — adjacent studio blocks hand over by time and REC stop 
   });
 });
 
+describe('R2 — time hand-over skips slots that will never be observed', () => {
+  const scene = (at: number, name: string, deckOnProgram = false) =>
+    ({ type: 'ProgramSceneChanged', at: T0 + at, scene: name, deckOnProgram }) as const;
+
+  const toBlock2Studio = () =>
+    run(
+      liveState(),
+      scene(100_000, 'CAM 2'),
+      { type: 'DeckItemStarted', at: T0 + 200_000, index: 0, path: 'D:/media/servizio1.mp4', title: 'Servizio 1', durationMs: 185_000 },
+      scene(200_000, 'PLAYOUT', true),
+      scene(385_000, 'CAM 1'),
+      scene(720_000, 'BREAK'),
+      scene(900_000, 'CAM 3'),
+    );
+
+  it('a dropped Servizio 2 does not block the hand-over past the block-2 studio slots', () => {
+    let s = toBlock2Studio();
+    expect(s.cursor).toBe(4);
+
+    s = run(
+      s,
+      { type: 'DeckPlaylistChanged', at: T0 + 950_000, items: [{ ...SOLO_FUTSAL_DECK[0]! }] },
+      scene(1_000_000, 'CAM 2'),
+    );
+    expect(s.slotRt[5]!.status).toBe('dropped');
+    expect(s.cursor).toBe(4);
+
+    s = run(s, { type: 'Tick', at: T0 + 1_625_000 });
+    expect(s.cursor).toBe(7); // Chiusura: block 2's studio slots and the dropped media never block the hand-over
+    expect(computeTiming(s, T0 + 1_745_000).rundownFinished).toBe(true);
+
+    s = run(s, { type: 'OutputChanged', at: T0 + 1_750_000, output: 'rec', state: 'stopped' });
+    expect(s.phase).toBe('ended');
+    expect(s.decisions.filter((d) => !d.confirmed)).toEqual([]);
+  });
+
+  it('Servizio 2 never aired is postponed (not lost) when the hand-over skips past it', () => {
+    let s = run(toBlock2Studio(), scene(1_000_000, 'CAM 2'));
+    expect(s.cursor).toBe(4);
+
+    s = run(s, { type: 'Tick', at: T0 + 1_625_000 });
+    expect(s.cursor).toBe(7);
+    expect(s.slotRt[5]!.status).toBe('postponed');
+  });
+});
+
 describe('OBS drop near a block end: estimated hand-overs are provisional', () => {
   it('restore + studio returns to the pre-loss slot; the real break then enters the break', () => {
     let s = run(

@@ -301,8 +301,12 @@ function applyTick(s: LiveState, at: MonoMs): boolean {
 
 /**
  * Hand-over between adjacent studio blocks that share the scene group on Program: no OBS event will ever
- * mark the boundary, so the next block starts when the current block's target expires. Returns the slot
- * to enter and when, or null when the boundary is observable (or the block is not started).
+ * mark the boundary, so the next block starts when the current block's target expires. Looks past any
+ * slot that will never be observed once the current block has expired: a dropped slot, a studio slot of
+ * the current block (another camera angle within the same group), or a media slot of the current block
+ * that was never aired ('pending' or 'postponed') — moveTo() below marks those it steps over accordingly.
+ * Returns the slot to enter and when, or null when the boundary is observable (or the block is not
+ * started).
  */
 function studioHandOver(s: LiveState): { next: number; at: MonoMs } | null {
   if (s.cursor < 0 || s.returnSlot !== null) return null;
@@ -310,8 +314,17 @@ function studioHandOver(s: LiveState): { next: number; at: MonoMs } | null {
   if (cur.kind !== 'studio') return null;
   const end = blockEndsAt(s, cur.blockIndex);
   if (end === null) return null;
+
   let next = s.cursor + 1;
-  while (next < s.slots.length && s.slotRt[next]!.status === 'dropped') next++;
+  for (;;) {
+    const slot = s.slots[next];
+    if (slot === undefined) break;
+    const status = s.slotRt[next]!.status;
+    if (status === 'dropped') { next++; continue; }
+    const unaired = status === 'pending' || status === 'postponed';
+    if (slot.blockIndex === cur.blockIndex && (slot.kind === 'studio' || unaired)) { next++; continue; }
+    break;
+  }
   const slot = s.slots[next];
   if (slot === undefined || slot.kind !== 'studio' || slot.blockIndex <= cur.blockIndex) return null;
   const scene = s.program.scene;
