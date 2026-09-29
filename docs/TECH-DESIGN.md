@@ -230,7 +230,8 @@ Esempio di vista `presenter`:
   "next":  { "label": "SERVIZIO 2 · Intervista", "durationMs": 184000 },
   "programEnd": { "anchor": { "kind":"countdown","endsAt":1790002520000,"source":"planned" }, "wallTime": "19:58:40" },
   "message": null,
-  "status": { "rec": true, "stream": false, "obs": "ok", "delayMs": 42000 } }
+  "delay": { "ms": 42000, "source": "measured" },
+  "status": { "rec": true, "stream": false, "obs": "ok" } }
 ```
 
 ### 6.2 Messaggi
