@@ -75,6 +75,18 @@ describe('REC pause', () => {
     expect(s.outputs.recPaused).toBe(false);
   });
 
+  it('live-to-tape: REC stop while paused ends the pause and shifts t0', () => {
+    const s = run(
+      liveState(),
+      { type: 'OutputChanged', at: T0 + 100_000, output: 'rec', state: 'paused' },
+      { type: 'OutputChanged', at: T0 + 130_000, output: 'rec', state: 'stopped' },
+    );
+    expect(s.t0).toBe(T0 + 30_000);
+    expect(s.blockRt[0]!.startedAt).toBe(T0 + 30_000);
+    expect(s.recPausedAt).toBeNull();
+    expect(s.outputs).toEqual({ rec: false, stream: false, recPaused: false });
+  });
+
   it('streaming: pause does not freeze program time', () => {
     const s = run(
       liveState('streaming'),
