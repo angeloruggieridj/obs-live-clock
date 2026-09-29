@@ -16,6 +16,8 @@ export function createLiveState(episode: Episode): LiveState {
     obs: 'lost',
     cursor: -1,
     returnSlot: null,
+    preLossCursor: null,
+    resyncPending: false,
     slotRt: slots.map(() => ({ status: 'pending', startedAt: null, endedAt: null })),
     blockRt: episode.blocks.map(() => ({ startedAt: null, endedAt: null, adjustMs: 0, targetMs: null, startedBy: null })),
     program: { scene: null, deckOnProgram: false },

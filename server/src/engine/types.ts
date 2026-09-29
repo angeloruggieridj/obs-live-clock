@@ -132,6 +132,13 @@ export interface LiveState {
   cursor: number;
   /** Slot to resume after a postponed item that was aired out of order. */
   returnSlot: number | null;
+  /**
+   * Position (`returnSlot ?? cursor`) when OBS was lost. Hand-overs made by time while OBS is lost are
+   * provisional: the first match after the restore goes back here before following Program.
+   */
+  preLossCursor: number | null;
+  /** Set on SourceRestored when the cursor moved past `preLossCursor` while OBS was lost. */
+  resyncPending: boolean;
   slotRt: SlotRuntime[];
   blockRt: BlockRuntime[];
   program: { scene: string | null; deckOnProgram: boolean };

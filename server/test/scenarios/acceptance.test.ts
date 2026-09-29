@@ -56,10 +56,21 @@ describe('AC6 — OBS lost: estimated, keeps counting; restored: measured and al
       { type: 'ProgramSceneChanged', at: T0 + 820_000, scene: 'CAM 2', deckOnProgram: false },
     );
     v = presenterView(s, T0 + 820_001, toWall);
-    expect(s.cursor).toBe(4); // reality wins: studio of block 2
-    expect(v.block).toMatchObject({ index: 2, anchor: { source: 'measured' } });
-    // block 2 starts early at 820 s -> full 600 000 ms target (recovery policy `keep` for an early start).
-    expect(v.block!.anchor).toEqual({ kind: 'countdown', endsAt: toWall(T0 + 820_000 + 600_000), source: 'measured' });
+    // The hand-over to the break was made by time while OBS was lost, so it was provisional: studio on
+    // Program after the restore means the pre-loss block 1 studio slot (the break was never observed).
+    expect(s.cursor).toBe(0);
+    expect(v.block).toEqual({ index: 0, name: 'Primo blocco', anchor: { kind: 'countdown', endsAt: toWall(T0 + 720_000), source: 'measured' } });
+
+    // From here Program drives: the observed break and studio realign the clock, measured.
+    s = run(
+      s,
+      { type: 'ProgramSceneChanged', at: T0 + 830_000, scene: 'BREAK', deckOnProgram: false },
+      { type: 'ProgramSceneChanged', at: T0 + 1_010_000, scene: 'CAM 2', deckOnProgram: false },
+    );
+    v = presenterView(s, T0 + 1_010_001, toWall);
+    expect(s.cursor).toBe(4);
+    // block 2 starts 110 s late -> 600 000 - 110 000 target (recovery policy next_elastic).
+    expect(v.block).toEqual({ index: 2, name: 'Secondo blocco', anchor: { kind: 'countdown', endsAt: toWall(T0 + 1_500_000), source: 'measured' } });
   });
 });
 
@@ -147,5 +158,59 @@ describe('Golden path — adjacent studio blocks hand over by time and REC stop 
     s = run(s, { type: 'OutputChanged', at: T0 + 1_625_000, output: 'rec', state: 'stopped' });
     expect(s.phase).toBe('ended');
     expect(s.decisions.filter((d) => !d.confirmed)).toEqual([]);
+  });
+});
+
+describe('OBS drop near a block end: estimated hand-overs are provisional', () => {
+  it('restore + studio returns to the pre-loss slot; the real break then enters the break', () => {
+    let s = run(
+      liveState(),
+      { type: 'SourceLost', at: T0 + 715_000 },
+      { type: 'Tick', at: T0 + 720_000 },
+    );
+    expect(s.cursor).toBe(3); // provisional: break by time
+    s = run(
+      s,
+      { type: 'SourceRestored', at: T0 + 725_000 },
+      { type: 'ProgramSceneChanged', at: T0 + 725_000, scene: 'CAM 1', deckOnProgram: false },
+    );
+    expect(s.cursor).toBe(0); // back on the block 1 studio slot it was on before the loss
+    expect(s.slotRt[3]!.status).toBe('pending');
+    expect(s.blockRt[1]).toMatchObject({ startedAt: null, startedBy: null });
+    expect(s.preLossCursor).toBeNull();
+    expect(s.resyncPending).toBe(false);
+    expect(presenterView(s, T0 + 726_000, toWall).block).toMatchObject({ index: 0, anchor: { source: 'measured' } });
+
+    s = run(s, { type: 'ProgramSceneChanged', at: T0 + 760_000, scene: 'BREAK', deckOnProgram: false });
+    const v = presenterView(s, T0 + 761_000, toWall);
+    expect(s.cursor).toBe(3);
+    expect(v.segment).toBe('break');
+    expect(v.returnTo).toMatchObject({ blockName: 'Secondo blocco', anchor: { kind: 'countdown' } });
+    expect(v.block).toMatchObject({ index: 1, anchor: { source: 'measured' } });
+  });
+
+  it('a restore that confirms the provisional position keeps it', () => {
+    const s = run(
+      liveState(),
+      { type: 'SourceLost', at: T0 + 715_000 },
+      { type: 'Tick', at: T0 + 720_000 },
+      { type: 'SourceRestored', at: T0 + 725_000 },
+      { type: 'ProgramSceneChanged', at: T0 + 725_000, scene: 'BREAK', deckOnProgram: false },
+    );
+    expect(s.cursor).toBe(3);
+    expect(s.blockRt[1]!.startedAt).toBe(T0 + 725_000); // re-started when observed, not at the invented 720 s
+    expect(s.blockRt[1]!.startedBy).toBe('obs');
+  });
+
+  it('an operator command during the loss is not undone by the restore', () => {
+    const s = run(
+      liveState(),
+      { type: 'SourceLost', at: T0 + 700_000 },
+      { type: 'Goto', at: T0 + 710_000, slot: 2 },
+      { type: 'Tick', at: T0 + 720_000 },
+      { type: 'SourceRestored', at: T0 + 725_000 },
+      { type: 'ProgramSceneChanged', at: T0 + 725_000, scene: 'CAM 1', deckOnProgram: false },
+    );
+    expect(s.cursor).toBe(2);
   });
 });

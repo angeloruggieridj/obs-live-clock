@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-import { closeSlot, enterSlot, moveTo, startBlock } from './cursor';
+import { closeSlot, correctTo, enterSlot, moveTo, startBlock } from './cursor';
 import { resolveDeckIndex } from './rundown';
 import type { LiveState, MonoMs, Slot } from './types';
 
@@ -41,8 +41,22 @@ function markOffScript(s: LiveState, at: MonoMs): void {
   if (s.offScript === null || s.offScript.scene !== scene) s.offScript = { scene, since: at };
 }
 
+/**
+ * First match after OBS came back: hand-overs made by time during the loss were guesses, so return to
+ * the pre-loss slot (un-starting the blocks started by time since) and let Program decide from there.
+ */
+function resync(s: LiveState, at: MonoMs): void {
+  const pre = s.preLossCursor;
+  s.preLossCursor = null;
+  s.resyncPending = false;
+  if (pre === null || pre < 0 || (s.returnSlot ?? s.cursor) <= pre) return;
+  if (s.returnSlot !== null) closeSlot(s, s.cursor, at);
+  correctTo(s, pre, at);
+}
+
 /** Align the cursor with what OBS shows on Program. Mutates `s`. */
 export function match(s: LiveState, at: MonoMs): void {
+  if (s.resyncPending) resync(s, at);
   const target = classify(s);
   if (target === null) {
     markOffScript(s, at);

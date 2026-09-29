@@ -37,6 +37,14 @@ function apply(s: LiveState, input: EngineInput): boolean {
 
 const canMatch = (s: LiveState) => s.phase === 'live' && s.control === 'auto';
 
+/** Where the show is in the rundown: the interrupted slot during an out-of-order excursion. */
+const position = (s: LiveState) => s.returnSlot ?? s.cursor;
+
+/** An operator move while OBS is lost is authoritative: it becomes the non-provisional position. */
+function operatorMoved(s: LiveState): void {
+  if (s.preLossCursor !== null) s.preLossCursor = position(s);
+}
+
 function applyEvent(s: LiveState, e: DomainEvent): boolean {
   switch (e.type) {
     case 'ProgramSceneChanged':
@@ -83,11 +91,14 @@ function applyEvent(s: LiveState, e: DomainEvent): boolean {
     case 'SourceLost':
       if (s.obs === 'lost') return false;
       s.obs = 'lost';
+      if (s.phase === 'live' && s.preLossCursor === null) s.preLossCursor = position(s);
       return true;
 
     case 'SourceRestored':
       if (s.obs === 'ok') return false;
       s.obs = 'ok';
+      if (s.preLossCursor !== null && position(s) > s.preLossCursor) s.resyncPending = true;
+      else s.preLossCursor = null;
       return true;
   }
 }
@@ -195,11 +206,13 @@ function applyCommand(s: LiveState, c: Command): boolean {
         s.returnSlot = null;
       }
       moveTo(s, s.cursor + 1, c.at);
+      operatorMoved(s);
       return true;
 
     case 'Prev':
       if (s.phase !== 'live' || s.cursor <= 0) return false;
       correctTo(s, s.cursor - 1, c.at);
+      operatorMoved(s);
       return true;
 
     case 'Goto':
@@ -210,6 +223,7 @@ function applyCommand(s: LiveState, c: Command): boolean {
       } else {
         correctTo(s, c.slot, c.at);
       }
+      operatorMoved(s);
       return true;
 
     case 'Adjust': {
