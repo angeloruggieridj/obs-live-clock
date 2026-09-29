@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import { describe, expect, it } from 'vitest';
 import { SOLO_FUTSAL_DECK } from '@olc/shared/testing';
-import { computeTiming, presenterView } from '../../src/engine/index';
+import { computeTiming, nextTickAt, presenterView } from '../../src/engine/index';
 import { T0, liveState, run } from '../helpers';
 
 const toWall = (m: number) => 1_790_000_000_000 + m;
@@ -161,7 +161,7 @@ describe('Golden path — adjacent studio blocks hand over by time and REC stop 
   });
 });
 
-describe('R2 — time hand-over skips slots that will never be observed', () => {
+describe('R2 — time hand-over skips only dropped slots (and studio slots that follow them)', () => {
   const scene = (at: number, name: string, deckOnProgram = false) =>
     ({ type: 'ProgramSceneChanged', at: T0 + at, scene: name, deckOnProgram }) as const;
 
@@ -197,13 +197,24 @@ describe('R2 — time hand-over skips slots that will never be observed', () => 
     expect(s.decisions.filter((d) => !d.confirmed)).toEqual([]);
   });
 
-  it('Servizio 2 never aired is postponed (not lost) when the hand-over skips past it', () => {
+  it('a Servizio 2 still pending (not dropped) blocks the hand-over: the block overruns in red instead', () => {
     let s = run(toBlock2Studio(), scene(1_000_000, 'CAM 2'));
     expect(s.cursor).toBe(4);
 
     s = run(s, { type: 'Tick', at: T0 + 1_625_000 });
-    expect(s.cursor).toBe(7);
-    expect(s.slotRt[5]!.status).toBe('postponed');
+    expect(s.cursor).toBe(4); // no hand-over: Servizio 2 is still owed, so block 2 keeps counting
+    expect(nextTickAt(s)).toBeNull();
+    const t = computeTiming(s, T0 + 1_625_000);
+    expect(t.blockIndex).toBe(2);
+    expect(t.block).toMatchObject({ endsAt: T0 + 1_500_000 }); // in the past: the block is overrunning
+
+    s = run(
+      s,
+      { type: 'DeckItemStarted', at: T0 + 1_650_000, index: 1, path: 'D:/media/servizio2.mp4', title: 'Servizio 2', durationMs: 120_000 },
+      scene(1_650_000, 'PLAYOUT', true),
+    );
+    expect(s.cursor).toBe(5); // normal forward match into block 2, no out-of-order excursion
+    expect(s.returnSlot).toBeNull();
   });
 });
 

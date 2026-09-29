@@ -301,12 +301,13 @@ function applyTick(s: LiveState, at: MonoMs): boolean {
 
 /**
  * Hand-over between adjacent studio blocks that share the scene group on Program: no OBS event will ever
- * mark the boundary, so the next block starts when the current block's target expires. Looks past any
- * slot that will never be observed once the current block has expired: a dropped slot, a studio slot of
- * the current block (another camera angle within the same group), or a media slot of the current block
- * that was never aired ('pending' or 'postponed') — moveTo() below marks those it steps over accordingly.
- * Returns the slot to enter and when, or null when the boundary is observable (or the block is not
- * started).
+ * mark the boundary, so the next block starts when the current block's target expires. Looks past every
+ * slot that will never be observed once the current block has expired: a dropped slot, and a studio slot
+ * of the current block (another camera angle within the same group) that follows one. A pending or
+ * postponed media of the current block still to air BLOCKS the hand-over: skipping a service is the
+ * operator's call (drop it from the playlist), not the clock's — an overrunning block with a service still
+ * to air keeps counting in red instead. Returns the slot to enter and when, or null when the boundary is
+ * observable (or the block is not started).
  */
 function studioHandOver(s: LiveState): { next: number; at: MonoMs } | null {
   if (s.cursor < 0 || s.returnSlot !== null) return null;
@@ -319,10 +320,8 @@ function studioHandOver(s: LiveState): { next: number; at: MonoMs } | null {
   for (;;) {
     const slot = s.slots[next];
     if (slot === undefined) break;
-    const status = s.slotRt[next]!.status;
-    if (status === 'dropped') { next++; continue; }
-    const unaired = status === 'pending' || status === 'postponed';
-    if (slot.blockIndex === cur.blockIndex && (slot.kind === 'studio' || unaired)) { next++; continue; }
+    if (s.slotRt[next]!.status === 'dropped') { next++; continue; }
+    if (slot.blockIndex === cur.blockIndex && slot.kind === 'studio') { next++; continue; }
     break;
   }
   const slot = s.slots[next];
