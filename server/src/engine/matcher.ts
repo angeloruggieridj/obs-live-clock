@@ -119,5 +119,37 @@ export function match(s: LiveState, at: MonoMs): void {
     }
   }
 
+  if (target.kind === 'media' && reenterClip(s, target, at)) {
+    s.offScript = null;
+    return;
+  }
+
   markOffScript(s, at);
+}
+
+/**
+ * Brief cutaway to studio during a clip: the clip was closed by the cut, but the same deck item is still
+ * playing. Re-open the most recently closed media slot and treat the studio slot as interrupted.
+ */
+function reenterClip(s: LiveState, target: Target, at: MonoMs): boolean {
+  const cur = s.deck.current;
+  if (s.cursor < 0 || s.returnSlot !== null || s.slots[s.cursor]!.kind !== 'studio') return false;
+  if (cur === null || !cur.playing) return false;
+  const position = cur.positionMs + (at - cur.at);
+  if (cur.durationMs >= 0 && position >= cur.durationMs) return false;
+
+  let last = -1;
+  for (let i = 0; i < s.slots.length; i++) {
+    const rt = s.slotRt[i]!;
+    if (s.slots[i]!.kind !== 'media' || rt.status !== 'done' || rt.endedAt === null) continue;
+    if (last < 0 || rt.endedAt >= s.slotRt[last]!.endedAt!) last = i;
+  }
+  if (last < 0 || !slotMatches(s, s.slots[last]!, target)) return false;
+
+  const rt = s.slotRt[last]!;
+  rt.status = 'onair';
+  rt.endedAt = null;
+  s.returnSlot = s.cursor; // the studio slot stays on air and resumes on the next studio cut
+  s.cursor = last;
+  return true;
 }

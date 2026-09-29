@@ -214,3 +214,41 @@ describe('OBS drop near a block end: estimated hand-overs are provisional', () =
     expect(s.cursor).toBe(2);
   });
 });
+
+describe('Brief cutaway to studio during a clip', () => {
+  const onAir = () =>
+    run(
+      liveState(),
+      { type: 'DeckItemStarted', at: T0 + 60_000, index: 0, path: 'D:/media/servizio1.mp4', title: 'Servizio 1', durationMs: 185_000 },
+      { type: 'ProgramSceneChanged', at: T0 + 60_000, scene: 'PLAYOUT', deckOnProgram: true },
+      { type: 'ProgramSceneChanged', at: T0 + 90_000, scene: 'CAM 2', deckOnProgram: false },
+    );
+
+  it('re-enters the clip, returns to the studio slot on the next cut', () => {
+    let s = onAir();
+    expect(s.cursor).toBe(2);
+    s = run(s, { type: 'ProgramSceneChanged', at: T0 + 95_000, scene: 'PLAYOUT', deckOnProgram: true });
+    const v = presenterView(s, T0 + 96_000, toWall);
+    expect(v.segment).toBe('media');
+    expect(v.returnTo).toMatchObject({ blockName: 'Primo blocco', anchor: { kind: 'countdown', endsAt: toWall(T0 + 245_000) } });
+    expect(s.cursor).toBe(1);
+    expect(s.returnSlot).toBe(2);
+    expect(s.slotRt[1]).toEqual({ status: 'onair', startedAt: T0 + 60_000, endedAt: null });
+    expect(s.slotRt[2]!.status).toBe('onair');
+
+    s = run(s, { type: 'ProgramSceneChanged', at: T0 + 245_000, scene: 'CAM 1', deckOnProgram: false });
+    expect(s.cursor).toBe(2);
+    expect(s.returnSlot).toBeNull();
+    expect(s.slotRt[1]).toMatchObject({ status: 'done', endedAt: T0 + 245_000 });
+  });
+
+  it('does not re-enter a clip that is no longer playing', () => {
+    const s = run(
+      onAir(),
+      { type: 'DeckPlayback', at: T0 + 92_000, index: 0, positionMs: 32_000, durationMs: 185_000, playing: false },
+      { type: 'ProgramSceneChanged', at: T0 + 95_000, scene: 'PLAYOUT', deckOnProgram: true },
+    );
+    expect(s.cursor).toBe(2);
+    expect(s.offScript).not.toBeNull();
+  });
+});
