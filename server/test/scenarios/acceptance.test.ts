@@ -15,10 +15,12 @@ describe('AC3 — camera switches never advance the block; the break scene enter
     }
     s = run(s, { type: 'ProgramSceneChanged', at: T0 + 700_000, scene: 'BREAK', deckOnProgram: false });
     expect(presenterView(s, T0 + 700_001, toWall).segment).toBe('break');
+    expect(s.cursor).toBe(3);
+    expect(presenterView(s, T0 + 700_001, toWall).block?.index).toBe(1);
   });
 });
 
-describe('AC5 — removing a service from the playlist updates studio time immediately', () => {
+describe('AC5 — removing a service drops it from next without moving the block or program end (fixed-container blocks)', () => {
   it('holds', () => {
     let s = run(
       liveState(),
@@ -26,9 +28,16 @@ describe('AC5 — removing a service from the playlist updates studio time immed
       { type: 'ProgramSceneChanged', at: T0 + 880_000, scene: 'CAM 1', deckOnProgram: false },
     );
     expect(presenterView(s, T0 + 881_000, toWall).next).toMatchObject({ title: 'Servizio 2' });
+    const before = presenterView(s, T0 + 889_000, toWall);
     s = run(s, { type: 'DeckPlaylistChanged', at: T0 + 890_000, items: [{ ...SOLO_FUTSAL_DECK[0]! }] });
+    const after = presenterView(s, T0 + 889_000, toWall);
     expect(s.slotRt[5]!.status).toBe('dropped');
     expect(presenterView(s, T0 + 891_000, toWall).next).toBeNull();
+    // Blocks are fixed-duration containers (SPEC §9): dropping a media never moves the block end nor the forecast end.
+    expect(after.programEnd).toEqual(before.programEnd);
+    expect(after.block).toEqual(before.block);
+    expect(before.next?.title).toBe('Servizio 2');
+    expect(after.next).toBeNull();
   });
 });
 
@@ -49,6 +58,8 @@ describe('AC6 — OBS lost: estimated, keeps counting; restored: measured and al
     v = presenterView(s, T0 + 820_001, toWall);
     expect(s.cursor).toBe(4); // reality wins: studio of block 2
     expect(v.block).toMatchObject({ index: 2, anchor: { source: 'measured' } });
+    // block 2 starts early at 820 s -> full 600 000 ms target (recovery policy `keep` for an early start).
+    expect(v.block!.anchor).toEqual({ kind: 'countdown', endsAt: toWall(T0 + 820_000 + 600_000), source: 'measured' });
   });
 });
 
@@ -65,6 +76,10 @@ describe('AC8 — overrun: amber/red is derivable, recovery lands on the next el
     const over = computeTiming(s, T0 + 750_000);
     expect(over.delayMs).toBe(30_000); // red, +0:30
 
+    const red = presenterView(s, T0 + 750_000, toWall).block!.anchor;
+    expect(red.kind).toBe('countdown');
+    expect(toWall(T0 + 750_000) - (red as { endsAt: number }).endsAt).toBe(30_000); // counter 30 s past zero
+
     s = run(
       s,
       { type: 'ProgramSceneChanged', at: T0 + 750_000, scene: 'BREAK', deckOnProgram: false },
@@ -78,10 +93,15 @@ describe('AC8 — overrun: amber/red is derivable, recovery lands on the next el
 
 describe('Out-of-order service (Servizio 1 aired in block 2)', () => {
   it('is postponed, then aired, then the show resumes in block 2', () => {
-    const s = run(
+    let s = run(
       liveState(),
       { type: 'ProgramSceneChanged', at: T0 + 700_000, scene: 'BREAK', deckOnProgram: false },
       { type: 'ProgramSceneChanged', at: T0 + 880_000, scene: 'CAM 1', deckOnProgram: false },
+    );
+    expect(s.slotRt[1]!.status).toBe('postponed'); // Servizio 1 postponed when the block was skipped to the break
+
+    s = run(
+      s,
       { type: 'DeckItemStarted', at: T0 + 900_000, index: 0, path: 'D:/media/servizio1.mp4', title: 'Servizio 1', durationMs: 185_000 },
       { type: 'ProgramSceneChanged', at: T0 + 900_000, scene: 'PLAYOUT', deckOnProgram: true },
     );
