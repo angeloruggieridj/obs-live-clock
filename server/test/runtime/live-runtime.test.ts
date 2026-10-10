@@ -225,4 +225,46 @@ describe('LiveRuntime', () => {
     expect(h.runtime.episodeId).toBe('ep-2026-10-12');
     expect(h.errors).toHaveLength(0);
   });
+
+  it('resume: a shape-valid but unusable snapshot cannot brick the runtime', async () => {
+    const h = makeRuntime(await tempDir());
+    await mkdir(join(h.dir, 'live'), { recursive: true });
+    await writeFile(
+      join(h.dir, 'live', 'snapshot.json'),
+      JSON.stringify({
+        schemaVersion: 1,
+        episodeId: 'x',
+        wallAt: 0,
+        state: { phase: 'live', obs: 'lost', message: null, blockRt: [], episode: { id: 'x', blocks: [] } },
+      }),
+    );
+    const restarted = h.restart();
+    expect(await restarted.resume()).toBe(false);
+    expect(h.errors).toHaveLength(1);
+    expect(restarted.episodeId).toBeNull();
+    expect(restarted.presenterView()).toBeNull();
+    await restarted.load(soloFutsalEpisode());
+    expect(restarted.episodeId).toBe('ep-2026-10-12');
+  });
+
+  it('resume: a snapshot whose episodeId does not match the state is rejected', async () => {
+    const h = makeRuntime(await tempDir());
+    await h.runtime.load(soloFutsalEpisode());
+    const path = join(h.dir, 'live', 'snapshot.json');
+    const snap = JSON.parse(await readFile(path, 'utf8'));
+    snap.episodeId = 'other';
+    await writeFile(path, JSON.stringify(snap));
+    const restarted = h.restart();
+    expect(await restarted.resume()).toBe(false);
+    expect(h.errors).toHaveLength(1);
+  });
+
+  it('resume: a load that lands during the snapshot read wins the race', async () => {
+    const h = await liveHarness();
+    const restarted = h.restart();
+    const resumed = restarted.resume();
+    await restarted.load(soloFutsalEpisode());
+    expect(await resumed).toBe(false);
+    expect(restarted.phase).toBe('preshow');
+  });
 });

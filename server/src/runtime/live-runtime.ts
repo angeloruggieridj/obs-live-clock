@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-import type { ClientCommand, Episode } from '@olc/shared';
+import { Episode, type ClientCommand } from '@olc/shared';
 import type { Clock, Scheduler } from '../clock/clock';
 import {
   controlView,
@@ -105,6 +105,9 @@ export class LiveRuntime {
       this.report(err);
       return false;
     }
+    if (this.disposed) return false;
+    // A `load()` may have landed while the snapshot was being read: never clobber it.
+    if (this.state !== null) return false;
     if (snapshot === undefined) return false;
     const input: EngineInput = { type: 'SourceLost', at: this.deps.clock.now() };
     let state: LiveState;
@@ -114,6 +117,29 @@ export class LiveRuntime {
       // A shallow snapshot can pass the store's shape check yet still be unusable. Touch what the owning
       // runtime will need (scheduling) before committing to it, so a bad restore never poisons `this.state`.
       nextTickAt(result.state);
+      // ...but shape-valid states can still be broken: validate the episode and the rundown runtime arrays
+      // the views rely on, and that the snapshot actually describes the episode it claims to.
+      if (!Episode.safeParse(result.state.episode).success) {
+        throw new Error(`Snapshot state holds an invalid episode (episodeId "${snapshot.episodeId}")`);
+      }
+      if (result.state.episode.id !== snapshot.episodeId) {
+        throw new Error(
+          `Snapshot episodeId "${snapshot.episodeId}" does not match state episode "${result.state.episode.id}"`,
+        );
+      }
+      const { slots, slotRt, blockRt } = result.state;
+      if (!Array.isArray(slots) || !Array.isArray(slotRt) || !Array.isArray(blockRt)) {
+        throw new Error('Snapshot state is missing its rundown runtime arrays');
+      }
+      if (slotRt.length !== slots.length) {
+        throw new Error('Snapshot state slotRt does not line up with slots');
+      }
+      if (blockRt.length !== result.state.episode.blocks.length) {
+        throw new Error('Snapshot state blockRt does not line up with episode blocks');
+      }
+      // Project both views on the local state (controlView calls presenterView internally); discard the
+      // result, but any throw here must reject the snapshot before it is committed.
+      controlView(result.state, this.deps.clock.now(), this.toWall);
       state = result.state;
       changed = result.changed;
     } catch (err) {
