@@ -1,0 +1,136 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+import { readFile, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { describe, expect, it } from 'vitest';
+import { SOLO_FUTSAL_DECK, soloFutsalEpisode } from '@olc/shared/testing';
+import { LiveJournal } from '../../src/persistence/journal';
+import { commandToInput } from '../../src/runtime/commands';
+import { LiveRunningError, NoEpisodeError } from '../../src/runtime/live-runtime';
+import { makeRuntime } from '../support/runtime';
+import { tempDir } from '../support/tmp';
+
+async function liveHarness() {
+  const h = makeRuntime(await tempDir());
+  await h.runtime.load(soloFutsalEpisode());
+  h.runtime.dispatch({ type: 'SourceRestored' });
+  h.runtime.dispatch({ type: 'DeckPlaylistChanged', items: SOLO_FUTSAL_DECK.map((i) => ({ ...i })) });
+  h.runtime.dispatch({ type: 'ProgramSceneChanged', scene: 'CAM 1', deckOnProgram: false });
+  h.runtime.dispatch({ type: 'OutputChanged', output: 'rec', state: 'started' });
+  await h.runtime.flush();
+  return h;
+}
+
+describe('commandToInput', () => {
+  it('maps every client command to an engine command', () => {
+    expect(commandToInput({ name: 'goto', slot: 4 })).toEqual({ type: 'Goto', slot: 4 });
+    expect(commandToInput({ name: 'adjust', deltaMs: 30_000 })).toEqual({ type: 'Adjust', deltaMs: 30_000 });
+    expect(commandToInput({ name: 'set_control', control: 'manual' })).toEqual({ type: 'SetControl', control: 'manual' });
+    expect(commandToInput({ name: 'resolve_decision', id: 2, choice: 'end' })).toEqual({ type: 'ResolveDecision', id: 2, choice: 'end' });
+    expect(commandToInput({ name: 'start_program' })).toEqual({ type: 'StartProgram' });
+  });
+});
+
+describe('LiveRuntime', () => {
+  it('loads an episode in preshow and saves a snapshot', async () => {
+    const h = makeRuntime(await tempDir());
+    let notified = 0;
+    h.runtime.subscribe(() => notified++);
+    await h.runtime.load(soloFutsalEpisode());
+    expect(h.runtime.episodeId).toBe('ep-2026-10-12');
+    expect(h.runtime.phase).toBe('preshow');
+    expect(h.runtime.presenterView()?.phase).toBe('preshow');
+    expect(notified).toBe(1);
+    const snap = JSON.parse(await readFile(join(h.dir, 'live', 'snapshot.json'), 'utf8'));
+    expect(snap).toMatchObject({ schemaVersion: 1, episodeId: 'ep-2026-10-12' });
+  });
+
+  it('stamps inputs with the clock, journals them and keeps the snapshot current', async () => {
+    const h = await liveHarness();
+    expect(h.runtime.phase).toBe('live');
+    expect(h.runtime.getState()?.t0).toBe(h.time.now());
+    const entries = await new LiveJournal(join(h.dir, 'live', 'ep-2026-10-12.log.jsonl')).readAll();
+    expect(entries.map((e) => e.input.type)).toEqual(['SourceRestored', 'DeckPlaylistChanged', 'ProgramSceneChanged', 'OutputChanged']);
+    expect(entries[3]!.input.at).toBe(h.time.now());
+    const snap = JSON.parse(await readFile(join(h.dir, 'live', 'snapshot.json'), 'utf8'));
+    expect(snap.state.phase).toBe('live');
+  });
+
+  it('returns false and neither journals nor notifies when nothing changed', async () => {
+    const h = await liveHarness();
+    let notified = 0;
+    h.runtime.subscribe(() => notified++);
+    expect(h.runtime.dispatch({ type: 'SourceRestored' })).toBe(false);
+    await h.runtime.flush();
+    expect(notified).toBe(0);
+    const entries = await new LiveJournal(join(h.dir, 'live', 'ep-2026-10-12.log.jsonl')).readAll();
+    expect(entries).toHaveLength(4);
+  });
+
+  it('refuses to load or unload while live', async () => {
+    const h = await liveHarness();
+    await expect(h.runtime.load(soloFutsalEpisode())).rejects.toBeInstanceOf(LiveRunningError);
+    await expect(h.runtime.unload()).rejects.toBeInstanceOf(LiveRunningError);
+    expect(h.runtime.isLive('ep-2026-10-12')).toBe(true);
+  });
+
+  it('fires scheduled ticks: a timeout message clears itself', async () => {
+    const h = await liveHarness();
+    h.runtime.command({ name: 'send_message', text: 'STRINGI', dismiss: { kind: 'timeout', ms: 10_000 } });
+    expect(h.runtime.presenterView()?.message).toEqual({ text: 'STRINGI' });
+    h.time.advance(9_999);
+    expect(h.runtime.presenterView()?.message).toEqual({ text: 'STRINGI' });
+    h.time.advance(1);
+    expect(h.runtime.presenterView()?.message).toBeNull();
+  });
+
+  it('keeps counting on the plan when OBS is lost (estimated hand-over by tick)', async () => {
+    const h = await liveHarness();
+    h.runtime.dispatch({ type: 'SourceLost' });
+    h.time.advance(720_000);
+    expect(h.runtime.getState()?.cursor).toBe(3);
+    expect(h.runtime.presenterView()?.segment).toBe('break');
+  });
+
+  it('command throws when no episode is loaded', async () => {
+    const h = makeRuntime(await tempDir());
+    expect(() => h.runtime.command({ name: 'next' })).toThrow(NoEpisodeError);
+    expect(h.runtime.dispatch({ type: 'Tick' })).toBe(false);
+  });
+
+  it('resume: a restart mid-show continues live with OBS lost', async () => {
+    const h = await liveHarness();
+    h.time.advance(60_000);
+    const restarted = h.restart();
+    expect(await restarted.resume()).toBe(true);
+    expect(restarted.phase).toBe('live');
+    expect(restarted.getState()?.obs).toBe('lost');
+    const block = restarted.presenterView()?.block;
+    expect(block?.index).toBe(0);
+    expect(block?.anchor).toMatchObject({ kind: 'countdown', source: 'estimated' });
+  });
+
+  it('unload clears the snapshot, so a restart resumes nothing', async () => {
+    const h = makeRuntime(await tempDir());
+    await h.runtime.load(soloFutsalEpisode());
+    await h.runtime.unload();
+    expect(h.runtime.episodeId).toBeNull();
+    expect(await h.restart().resume()).toBe(false);
+  });
+
+  it('corrupt snapshot does not block start: resume returns false and reports', async () => {
+    const h = makeRuntime(await tempDir());
+    await h.runtime.load(soloFutsalEpisode());
+    await writeFile(join(h.dir, 'live', 'snapshot.json'), '{ broken');
+    const restarted = h.restart();
+    expect(await restarted.resume()).toBe(false);
+    expect(h.errors).toHaveLength(1);
+  });
+
+  it('dispose cancels the pending tick', async () => {
+    const h = await liveHarness();
+    h.runtime.dispatch({ type: 'SourceLost' });
+    expect(h.time.pending).toBe(1);
+    h.runtime.dispose();
+    expect(h.time.pending).toBe(0);
+  });
+});
