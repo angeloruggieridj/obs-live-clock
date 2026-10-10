@@ -2,10 +2,11 @@
 import { readFile, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { InstanceLockedError, acquireLock } from '../../src/app/instance-lock';
+import { InstanceLockedError, acquireLock, olcInstanceAlive } from '../../src/app/instance-lock';
 import { dataPaths, defaultDataDir } from '../../src/app/paths';
 import { ensureSecretToken } from '../../src/app/secret';
 import { listenHost, loadSettings } from '../../src/app/settings';
+import { writeJsonAtomic } from '../../src/persistence/json-file';
 import { tempDir } from '../support/tmp';
 
 describe('defaultDataDir', () => {
@@ -76,7 +77,7 @@ describe('ensureSecretToken', () => {
 describe('acquireLock', () => {
   it('writes the pid and releases only its own lock', async () => {
     const path = join(await tempDir(), 'instance.lock');
-    const release = await acquireLock(path, 111, () => true);
+    const release = await acquireLock(path, 111, async () => true);
     expect(await readFile(path, 'utf8')).toBe('111');
     await release();
     await expect(readFile(path, 'utf8')).rejects.toThrow();
@@ -84,15 +85,42 @@ describe('acquireLock', () => {
 
   it('refuses when another live instance holds the lock', async () => {
     const path = join(await tempDir(), 'instance.lock');
-    await acquireLock(path, 111, () => true);
-    await expect(acquireLock(path, 222, (pid) => pid === 111)).rejects.toBeInstanceOf(InstanceLockedError);
+    await acquireLock(path, 111, async () => true);
+    await expect(acquireLock(path, 222, async (pid) => pid === 111)).rejects.toBeInstanceOf(InstanceLockedError);
   });
 
   it('takes over a stale lock', async () => {
     const path = join(await tempDir(), 'instance.lock');
     await writeFile(path, '999');
-    const release = await acquireLock(path, 222, () => false);
+    const release = await acquireLock(path, 222, async () => false);
     expect(await readFile(path, 'utf8')).toBe('222');
     await release();
+  });
+
+  it('lets exactly one of two concurrent starters take over a stale lock', async () => {
+    const path = join(await tempDir(), 'instance.lock');
+    await writeFile(path, '999');
+    const results = await Promise.allSettled([
+      acquireLock(path, 111, async () => false),
+      acquireLock(path, 222, async () => false),
+    ]);
+    const fulfilled = results.filter((r) => r.status === 'fulfilled');
+    const rejected = results.filter((r) => r.status === 'rejected');
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect((rejected[0] as PromiseRejectedResult).reason).toBeInstanceOf(InstanceLockedError);
+  });
+});
+
+describe('olcInstanceAlive', () => {
+  it('is false when runtime.json is missing', async () => {
+    const paths = dataPaths(await tempDir());
+    expect(await olcInstanceAlive(paths)(4242)).toBe(false);
+  });
+
+  it('is false when the recorded port does not answer', async () => {
+    const paths = dataPaths(await tempDir());
+    await writeJsonAtomic(paths.runtime, { port: 1, pid: 4242, instanceId: 'i' });
+    expect(await olcInstanceAlive(paths)(4242)).toBe(false);
   });
 });
