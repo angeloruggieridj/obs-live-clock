@@ -199,13 +199,7 @@ Al `SourceRestored` segue la sincronizzazione iniziale, poi il matcher riallinea
 ### 5.7 Persistenza e ripresa
 - Ogni input accettato viene aggiunto a `live/<episodeId>.log.jsonl` come `{ seq, wallAt, monoAt, input }`.
 - `snapshot.json` viene riscritto (in modo atomico, con debounce di 250 ms) con lo stato, più la coppia `(wallAt, monoAt)` di riferimento.
-- **Ripresa dopo il riavvio.** Il tempo monotono non sopravvive al riavvio, quindi si procede così:
-  1. si converte lo snapshot in orario reale;
-  2. si ricostruisce il riferimento monotono;
-  3. si segna `source = estimated`;
-  4. alla connessione con OBS la sincronizzazione iniziale riallinea tutto.
-
-  Se l'orario reale è saltato (NTP) viene registrato un avviso.
+- **Ripresa dopo il riavvio.** Il tempo monotono è ancorato all'epoca (`performance.timeOrigin + performance.now()`), quindi i tempi salvati nello snapshot restano validi anche dopo il riavvio, senza bisogno di convertirli. Al riavvio il runtime ricarica lo snapshot e segna OBS come perso (`SourceLost`), quindi tutti i valori sono `estimated`. Quando l'adapter si riconnette, la sincronizzazione iniziale riallinea il rundown. Un salto dell'orologio di sistema (NTP) fra due esecuzioni viene accettato.
 
 ---
 

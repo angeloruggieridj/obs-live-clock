@@ -14,6 +14,19 @@ OBS Live Clock **observes** OBS Studio (obs-websocket v5) and [OBS Playlist Deck
 - [Technical design](docs/TECH-DESIGN.md) (Italian)
 - [Technical decisions log](docs/DECISIONS.md) (Italian)
 
+## Development
+
+Requirements: Node.js 24, pnpm (via `corepack enable`).
+
+```bash
+pnpm install
+pnpm test        # all tests
+pnpm typecheck
+pnpm --filter @olc/server dev   # start the local server on http://127.0.0.1:4460
+```
+
+Data is stored in the platform data directory (`%APPDATA%/obs-live-clock`, `~/Library/Application Support/obs-live-clock`, `~/.config/obs-live-clock`); set `OLC_DATA_DIR` to use another folder.
+
 ## License
 
 GPL-2.0-or-later. See [LICENSE](LICENSE).
