@@ -171,7 +171,11 @@ export class LiveRuntime {
     if (!result.changed) return false;
     this.state = result.state;
     this.persist(input, this.deps.clock.wall());
-    this.reschedule();
+    try {
+      this.reschedule();
+    } catch (err) {
+      this.report(err);
+    }
     this.notify();
     return true;
   }
@@ -243,13 +247,18 @@ export class LiveRuntime {
     if (at === null) return;
     this.cancelTick = this.deps.scheduler.setTimer(at, () => {
       this.cancelTick = null;
-      if (this.dispatch({ type: 'Tick' })) return;
-      const due = this.state === null ? null : nextTickAt(this.state);
-      if (due !== null && due <= this.deps.clock.now()) {
-        this.report(new Error(`Tick due at ${due} changed nothing; not rescheduling`));
-        return;
+      try {
+        if (this.dispatch({ type: 'Tick' })) return;
+        const due = this.state === null ? null : nextTickAt(this.state);
+        if (due !== null && due <= this.deps.clock.now()) {
+          this.report(new Error(`Tick due at ${due} changed nothing; not rescheduling`));
+          return;
+        }
+        this.reschedule();
+      } catch (err) {
+        // Keep the previous state and stop: a broken tick must never crash the process or loop.
+        this.report(err);
       }
-      this.reschedule();
     });
   }
 

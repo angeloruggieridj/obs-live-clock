@@ -234,6 +234,20 @@ describe('LiveRuntime', () => {
     expect(counted).toBeGreaterThan(before);
   });
 
+  it('a throw in the tick path is contained, reported and leaves the state unchanged', async () => {
+    const h = await liveHarness();
+    h.runtime.dispatch({ type: 'SourceLost' });
+    const before = h.runtime.getState();
+    const original = h.runtime.dispatch.bind(h.runtime);
+    h.runtime.dispatch = (input) => {
+      if (input.type === 'Tick') throw new Error('tick boom');
+      return original(input);
+    };
+    expect(() => h.time.advance(720_000)).not.toThrow();
+    expect(h.runtime.getState()).toBe(before);
+    expect(h.errors.length).toBeGreaterThanOrEqual(1);
+  });
+
   it('dispose marks the runtime disposed', async () => {
     const h = await liveHarness();
     h.runtime.dispose();
