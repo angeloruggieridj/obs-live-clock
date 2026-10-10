@@ -197,8 +197,9 @@ Al `SourceRestored` segue la sincronizzazione iniziale, poi il matcher riallinea
   - prima → `Decision` "fine anticipata o interruzione?", con default `interruzione`.
 
 ### 5.7 Persistenza e ripresa
-- Ogni input accettato viene aggiunto a `live/<episodeId>.log.jsonl` come `{ seq, wallAt, monoAt, input }`.
-- `snapshot.json` viene riscritto (in modo atomico, con debounce di 250 ms) con lo stato, più la coppia `(wallAt, monoAt)` di riferimento.
+- Ogni input accettato viene aggiunto a `live/<episodeId>.log.jsonl` come `{ seq, wallAt, input }`. L'input contiene già `at`, il tempo monotono.
+- `snapshot.json` viene riscritto in modo atomico dopo ogni cambiamento, con `{ schemaVersion, episodeId, wallAt, state }`. Il debounce di 250 ms è rimandato al Piano 3, prima degli eventi `DeckPlayback` a circa 1 Hz.
+- **Ripresa validata.** Prima di accettare lo stato ripristinato, il runtime lo valida: schema della puntata, coerenza dell'id, lunghezze degli array, proiezione di prova. Uno snapshot rotto viene segnalato e ignorato, e uno spettacolo già concluso (`ended`) non viene ripreso.
 - **Ripresa dopo il riavvio.** Il tempo monotono è ancorato all'epoca (`performance.timeOrigin + performance.now()`), quindi i tempi salvati nello snapshot restano validi anche dopo il riavvio, senza bisogno di convertirli. Al riavvio il runtime ricarica lo snapshot e segna OBS come perso (`SourceLost`), quindi tutti i valori sono `estimated`. Quando l'adapter si riconnette, la sincronizzazione iniziale riallinea il rundown. Un salto dell'orologio di sistema (NTP) fra due esecuzioni viene accettato.
 
 ---
@@ -206,7 +207,7 @@ Al `SourceRestored` segue la sincronizzazione iniziale, poi il matcher riallinea
 ## 6. Proiezione e protocollo WebSocket
 
 ### 6.1 Ancoraggi
-La proiezione trasforma `LiveState` in una **vista per ruolo** (`presenter`, `dock`, `control`) composta da ancoraggi:
+La proiezione trasforma `LiveState` in una **vista per ruolo** (`presenter`, `control`) composta da ancoraggi:
 
 ```ts
 Anchor =
@@ -229,15 +230,17 @@ Esempio di vista `presenter`:
 ```
 
 ### 6.2 Messaggi
+Ruoli dei client: `presenter` (solo visualizzazione) e `control` (dock e vista estesa: può inviare comandi). Il dock usa il ruolo `control`.
+
 | Direzione | Tipo | Contenuto |
 |---|---|---|
-| C→S | `hello` | `{ role, protocol, lang }` |
-| S→C | `welcome` | `{ serverVersion, instanceId }` + prima `view` |
-| C→S / S→C | `time.ping` / `time.pong` | `{ t0 }` / `{ t0, serverWall }`: il client stima offset e RTT e tiene il campione con RTT minimo tra gli ultimi 8 |
-| S→C | `view` | vista completa per ruolo, con `rev` crescente |
-| S→C | `heartbeat` | ogni 1 s `{ rev, serverWall }`. Se manca per più di 2 s il client passa a *stale* |
-| C→S | `command` | `{ id, name, args }`: `message.send`, `message.clear`, `emergency.next|prev|goto|adjust|toggleManual|startProgram`, `decision.resolve` |
-| S→C | `ack` / `error` | esito del comando |
+| C→S | `hello` | `{ role, protocol }` |
+| S→C | `welcome` | `{ serverVersion, instanceId, protocol }`, seguito subito dalla prima `view` (`null` se non è caricata nessuna puntata) |
+| C→S / S→C | `time.ping` / `time.pong` | `{ t0 }` / `{ t0, serverWall }`. Il client stima offset e RTT e tiene il campione con RTT minimo |
+| S→C | `view` | Vista completa per ruolo con `rev` crescente. Viene inviata solo quando il JSON è cambiato per quel client |
+| S→C | `heartbeat` | Ogni 1 s, `{ rev, serverWall }`, dove `rev` è l'ultima view inviata **a quel client**. Se manca per più di 2 s, il client considera i dati non aggiornati |
+| C→S | `command` | `{ id, command }`. `command.name` è uno di `start_program`, `end_program`, `next`, `prev`, `goto`, `adjust`, `set_control`, `send_message`, `clear_message`, `resolve_decision`. Il ruolo `presenter` riceve `forbidden` |
+| S→C | `ack` / `error` | `ack { id, changed }`; `error { id, code, message }` con `code` uno di `invalid_message`, `protocol_mismatch` (chiusura 4001), `hello_required`, `no_episode`, `forbidden`, `internal` |
 
 Gli schemi zod sono in `shared/protocol` e vengono validati su entrambi i lati. `protocol` è un intero: un client incompatibile viene rifiutato con un messaggio chiaro.
 
