@@ -31,7 +31,7 @@ export const ClientMessage = z.discriminatedUnion('type', [
 ]);
 export type ClientMessage = z.infer<typeof ClientMessage>;
 
-export type ErrorCode = 'invalid_message' | 'protocol_mismatch' | 'hello_required' | 'no_episode' | 'internal';
+export type ErrorCode = 'invalid_message' | 'protocol_mismatch' | 'hello_required' | 'no_episode' | 'internal' | 'forbidden';
 
 /** Messages the server sends. `view` is the engine projection for the client's role (typed in Plan 4). */
 export type ServerMessage =
@@ -39,5 +39,5 @@ export type ServerMessage =
   | { type: 'view'; rev: number; role: ClientRole; view: unknown }
   | { type: 'heartbeat'; rev: number; serverWall: number }
   | { type: 'time.pong'; t0: number; serverWall: number }
-  | { type: 'ack'; id: string }
+  | { type: 'ack'; id: string; changed: boolean }
   | { type: 'error'; id: string | null; code: ErrorCode; message: string };

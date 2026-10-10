@@ -147,9 +147,14 @@ export function registerWs(app: FastifyInstance, ctx: WsContext): void {
           return;
         }
 
+        if (client.role === 'presenter') {
+          send(socket, { type: 'error', id: msg.id, code: 'forbidden', message: 'The presenter role cannot send commands' });
+          return;
+        }
+
         commandId = msg.id;
-        ctx.runtime.command(msg.command);
-        send(socket, { type: 'ack', id: msg.id });
+        const changed = ctx.runtime.command(msg.command);
+        send(socket, { type: 'ack', id: msg.id, changed });
       } catch (err) {
         if (err instanceof NoEpisodeError) {
           send(socket, { type: 'error', id: commandId, code: 'no_episode', message: 'No episode is loaded' });

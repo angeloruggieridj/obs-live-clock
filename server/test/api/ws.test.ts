@@ -78,14 +78,37 @@ describe('WebSocket hub', () => {
     const s = await start();
     await s.runtime.load(soloFutsalEpisode());
     const c = await connect(s.url);
-    c.send({ type: 'hello', role: 'presenter', protocol: PROTOCOL_VERSION });
+    c.send({ type: 'hello', role: 'control', protocol: PROTOCOL_VERSION });
     await c.next(is('view'));
     c.send({ type: 'command', id: 'm1', command: { name: 'send_message', text: 'STRINGI', dismiss: { kind: 'manual' } } });
     const v = (await c.next(
-      (m) => m.type === 'view' && (m.view as { message: unknown }).message !== null,
+      (m) => m.type === 'view' && (m.view as { presenter: { message: unknown } }).presenter.message !== null,
     )) as Extract<ServerMessage, { type: 'view' }>;
-    expect((v.view as { message: unknown }).message).toEqual({ text: 'STRINGI' });
-    expect(await c.next(is('ack'))).toEqual({ type: 'ack', id: 'm1' });
+    expect((v.view as { presenter: { message: unknown } }).presenter.message).toEqual({ text: 'STRINGI' });
+    expect(await c.next(is('ack'))).toEqual({ type: 'ack', id: 'm1', changed: true });
+    c.close();
+  });
+
+  it('acks a no-op command with changed: false', async () => {
+    const s = await start();
+    await s.runtime.load(soloFutsalEpisode());
+    const c = await connect(s.url);
+    c.send({ type: 'hello', role: 'control', protocol: PROTOCOL_VERSION });
+    await c.next(is('view'));
+    c.send({ type: 'command', id: 'n1', command: { name: 'next' } });
+    expect(await c.next(is('ack'))).toEqual({ type: 'ack', id: 'n1', changed: false });
+    c.close();
+  });
+
+  it('refuses commands from a presenter', async () => {
+    const s = await start();
+    await s.runtime.load(soloFutsalEpisode());
+    const c = await connect(s.url);
+    c.send({ type: 'hello', role: 'presenter', protocol: PROTOCOL_VERSION });
+    await c.next(is('view'));
+    c.send({ type: 'command', id: 'p1', command: { name: 'send_message', text: 'NOPE', dismiss: { kind: 'manual' } } });
+    expect(await c.next(is('error'))).toMatchObject({ type: 'error', id: 'p1', code: 'forbidden' });
+    expect(s.runtime.presenterView()?.message).toBeNull();
     c.close();
   });
 
