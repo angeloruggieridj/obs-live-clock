@@ -1,0 +1,241 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+import { describe, expect, it } from 'vitest';
+import { SOLO_FUTSAL_DECK, soloFutsalEpisode } from '@olc/shared/testing';
+import { ObsRequestError } from '../../src/obs/client';
+import { ObsService } from '../../src/obs/obs-service';
+import { FakeObsClient } from '../support/fake-obs';
+import { makeRuntime } from '../support/runtime';
+import { tempDir } from '../support/tmp';
+
+const flush = () => new Promise((r) => setImmediate(r));
+
+const item = (sourceName: string) => ({
+  sourceName, sceneItemEnabled: true, sourceType: 'OBS_SOURCE_TYPE_INPUT', isGroup: false,
+});
+
+const vendor = (eventType: string, eventData: Record<string, unknown>) => ({
+  vendorName: 'obs-playlist-deck', eventType, eventData,
+});
+
+interface SetupOpts {
+  deckAbsent?: boolean;
+}
+
+async function setup(opts: SetupOpts = {}) {
+  const h = makeRuntime(await tempDir());
+  const scenes: Record<string, unknown[]> = {
+    'CAM 1': [item('Camera 1')],
+    PLAYOUT: [item('Deck Media')],
+    BREAK: [item('Tappo')],
+  };
+  let getSceneListCalls = 0;
+  let failGetSceneListOn: number | null = null;
+  let items = SOLO_FUTSAL_DECK.map((i) => ({ ...i }));
+  const clients: FakeObsClient[] = [];
+  const clientFactory = () => {
+    const obs = new FakeObsClient();
+    obs.respond('GetSceneList', () => {
+      getSceneListCalls += 1;
+      if (failGetSceneListOn !== null && getSceneListCalls === failGetSceneListOn) throw new Error('socket closed');
+      return { scenes: Object.keys(scenes).map((sceneName) => ({ sceneName })) };
+    });
+    obs.respond('GetSceneItemList', (d) => ({ sceneItems: scenes[String(d?.sceneName)] ?? [] }));
+    obs.respond('GetGroupSceneItemList', () => ({ sceneItems: [] }));
+    obs.respond('GetCurrentProgramScene', () => ({ sceneName: 'CAM 1' }));
+    obs.respond('GetRecordStatus', () => ({ outputActive: false, outputPaused: false }));
+    obs.respond('GetStreamStatus', () => ({ outputActive: false }));
+    obs.respond('GetMediaInputStatus', () => ({ mediaState: 'OBS_MEDIA_STATE_PLAYING', mediaCursor: 0, mediaDuration: 180_000 }));
+    obs.respond('CallVendorRequest', (d) => {
+      if (opts.deckAbsent) throw new ObsRequestError(600, 'vendor not found');
+      if (d?.requestType === 'GetStatus') {
+        return {
+          responseData: {
+            ok: true, pluginVersion: '1.4.0', sourceName: 'Deck Media', playlistName: 'Puntata',
+            currentIndex: -1, positionMs: -1, durationMs: -1, playing: false, count: items.length,
+          },
+        };
+      }
+      const r = d?.requestData as { from: number; to: number };
+      return { responseData: { ok: true, count: items.length, items: items.slice(r.from, r.to + 1) } };
+    });
+    clients.push(obs);
+    return obs;
+  };
+  const serviceErrors: unknown[] = [];
+  const service = new ObsService({
+    runtime: h.runtime,
+    clock: h.time,
+    scheduler: h.time,
+    clientFactory,
+    report: (e) => void serviceErrors.push(e),
+  });
+  return {
+    runtime: h.runtime,
+    time: h.time,
+    runtimeErrors: h.errors,
+    service,
+    serviceErrors,
+    clients,
+    setItems: (next: typeof items) => (items = next),
+    failGetSceneListOn: (n: number | null) => (failGetSceneListOn = n),
+    getSceneListCalls: () => getSceneListCalls,
+    current: () => clients[clients.length - 1]!,
+  };
+}
+
+describe('ObsService', () => {
+  it('connects, starts the deck and reports the Program scene', async () => {
+    const h = await setup();
+    await h.runtime.load(soloFutsalEpisode());
+    h.service.setCredentials({ host: '127.0.0.1', port: 4455 });
+    await flush();
+    await flush();
+
+    expect(h.service.status().connection).toBe('connected');
+    expect(h.service.status().obsWebSocketVersion).toBe('5.5.0');
+    expect(h.runtime.getState()?.obs).toBe('ok');
+    expect(h.service.deckItems()).toEqual([
+      { index: 0, path: 'D:/media/servizio1.mp4', title: 'Servizio 1', durationMs: 185_000 },
+      { index: 1, path: 'D:/media/servizio2.mp4', title: 'Servizio 2', durationMs: 120_000 },
+    ]);
+    expect(h.service.status().deck?.capability).toBe('events');
+    expect(h.runtime.getState()?.program.scene).toBe('CAM 1');
+    expect(h.service.status().programScene).toBe('CAM 1');
+    expect(h.service.sceneNames()).toEqual(['CAM 1', 'PLAYOUT', 'BREAK']);
+  });
+
+  it('matches the deck item when Program shows the deck source while live', async () => {
+    const h = await setup();
+    await h.runtime.load(soloFutsalEpisode());
+    h.service.setCredentials({ host: '127.0.0.1', port: 4455 });
+    await flush();
+    await flush();
+
+    h.current().emit('RecordStateChanged', { outputActive: true, outputState: 'OBS_WEBSOCKET_OUTPUT_STARTED' });
+    expect(h.runtime.getState()?.phase).toBe('live');
+    expect(h.runtime.getState()?.cursor).toBe(0);
+
+    h.current().emit('CurrentProgramSceneChanged', { sceneName: 'PLAYOUT' });
+    h.current().emit('VendorEvent', vendor('item-started', {
+      index: 0, title: 'Servizio 1', path: 'D:/media/servizio1.mp4', durationMs: 185_000,
+    }));
+
+    expect(h.runtime.getState()?.cursor).toBe(1);
+  });
+
+  it('dispatches SourceLost and reports the estimated anchor when OBS disconnects', async () => {
+    const h = await setup();
+    await h.runtime.load(soloFutsalEpisode());
+    h.service.setCredentials({ host: '127.0.0.1', port: 4455 });
+    await flush();
+    await flush();
+
+    h.current().emit('RecordStateChanged', { outputActive: true, outputState: 'OBS_WEBSOCKET_OUTPUT_STARTED' });
+    h.current().emit('ConnectionClosed', { code: 1001 });
+    await flush();
+
+    expect(h.runtime.getState()?.obs).toBe('lost');
+    expect(h.runtime.presenterView()?.block?.anchor).toMatchObject({ source: 'estimated' });
+    expect(h.service.status().connection).toBe('disconnected');
+    // The adapters are gone until the reconnect: nothing stale is exposed.
+    expect(h.service.client()).toBeNull();
+    expect(h.service.sceneNames()).toBeNull();
+    expect(h.service.deckItems()).toBeNull();
+    expect(h.service.status().programScene).toBeNull();
+  });
+
+  it('reconnects after 500 ms with fresh adapters and restores obs', async () => {
+    const h = await setup();
+    await h.runtime.load(soloFutsalEpisode());
+    h.service.setCredentials({ host: '127.0.0.1', port: 4455 });
+    await flush();
+    await flush();
+
+    const first = h.current();
+    first.emit('ConnectionClosed', { code: 1001 });
+    await flush();
+    expect(h.service.status().connection).toBe('disconnected');
+
+    h.time.advance(500);
+    await flush();
+    await flush();
+
+    expect(h.service.status().connection).toBe('connected');
+    expect(h.runtime.getState()?.obs).toBe('ok');
+    expect(h.clients.length).toBe(2);
+    expect(h.current()).not.toBe(first);
+    expect(h.service.deckItems()).not.toBeNull();
+  });
+
+  it('connects without the deck vendor and still reports the Program scene', async () => {
+    const h = await setup({ deckAbsent: true });
+    await h.runtime.load(soloFutsalEpisode());
+    h.service.setCredentials({ host: '127.0.0.1', port: 4455 });
+    await flush();
+    await flush();
+
+    expect(h.service.status().connection).toBe('connected');
+    expect(h.service.status().deck?.capability).toBe('absent');
+    expect(h.service.deckItems()).toBeNull();
+    expect(h.runtime.getState()?.obs).toBe('ok');
+    expect(h.runtime.getState()?.program.scene).toBe('CAM 1');
+  });
+
+  it('resyncs the adapters when an episode is loaded while connected', async () => {
+    const h = await setup();
+    await h.runtime.load(soloFutsalEpisode());
+    h.service.setCredentials({ host: '127.0.0.1', port: 4455 });
+    await flush();
+    await flush();
+    expect(h.runtime.getState()?.obs).toBe('ok');
+
+    // load() resets the runtime to obs:'lost' (while OBS stays connected); the service's subscription
+    // resyncs the adapters, so the state is reconciled again by the time load() resolves.
+    await h.runtime.load(soloFutsalEpisode());
+    await flush();
+    await flush();
+    expect(h.runtime.getState()?.obs).toBe('ok');
+    expect(h.runtime.getState()?.program.scene).toBe('CAM 1');
+    expect(h.service.deckItems()).not.toBeNull();
+  });
+
+  it('forces a reconnect when an episode-load resync fails, so obs cannot stay lost', async () => {
+    const h = await setup();
+    await h.runtime.load(soloFutsalEpisode());
+    h.service.setCredentials({ host: '127.0.0.1', port: 4455 });
+    await flush();
+    await flush();
+    expect(h.runtime.getState()?.obs).toBe('ok');
+    expect(h.getSceneListCalls()).toBe(1);
+
+    h.failGetSceneListOn(2);
+    await h.runtime.load(soloFutsalEpisode());
+    await flush();
+    await flush();
+    await flush();
+
+    expect(h.clients.length).toBe(2);
+    expect(h.service.status().connection).toBe('connected');
+    expect(h.runtime.getState()?.obs).toBe('ok');
+    expect(h.runtime.getState()?.program.scene).toBe('CAM 1');
+    expect(h.getSceneListCalls()).toBe(3);
+  });
+
+  it('stops the connection and adapters and dispatches nothing afterwards', async () => {
+    const h = await setup();
+    await h.runtime.load(soloFutsalEpisode());
+    h.service.setCredentials({ host: '127.0.0.1', port: 4455 });
+    await flush();
+    await flush();
+
+    await h.service.stop();
+    expect(h.service.status().connection).toBe('idle');
+    expect(h.time.pending).toBe(0);
+
+    const before = h.runtime.getState();
+    h.current().emit('RecordStateChanged', { outputActive: true, outputState: 'OBS_WEBSOCKET_OUTPUT_STARTED' });
+    h.current().emit('CurrentProgramSceneChanged', { sceneName: 'BREAK' });
+    await flush();
+    expect(h.runtime.getState()).toBe(before);
+  });
+});
