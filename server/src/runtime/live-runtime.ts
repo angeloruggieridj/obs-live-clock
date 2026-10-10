@@ -119,6 +119,8 @@ export class LiveRuntime {
     // A `load()` may have landed while the snapshot was being read: never clobber it.
     if (this.state !== null) return false;
     if (snapshot === undefined) return false;
+    // A finished show is not resumed: its snapshot stays on disk but the runtime starts empty.
+    if (snapshot.state.phase === 'ended') return false;
     const input: EngineInput = { type: 'SourceLost', at: this.deps.clock.now() };
     let state: LiveState;
     let changed: boolean;

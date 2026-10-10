@@ -140,6 +140,16 @@ describe('LiveRuntime', () => {
     runtime.dispose();
   });
 
+  it('resume skips a snapshot whose show has already ended', async () => {
+    const h = await liveHarness();
+    h.runtime.command({ name: 'end_program' });
+    await h.runtime.flush();
+    expect(h.runtime.phase).toBe('ended');
+    const restarted = h.restart();
+    expect(await restarted.resume()).toBe(false);
+    expect(restarted.episodeId).toBeNull();
+  });
+
   it('unload clears the snapshot, so a restart resumes nothing', async () => {
     const h = makeRuntime(await tempDir());
     await h.runtime.load(soloFutsalEpisode());
