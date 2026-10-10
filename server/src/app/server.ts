@@ -121,7 +121,7 @@ export async function buildServer(opts: ServerOptions): Promise<BuiltServer> {
     instanceId,
   });
   registerInternal(app, { token: secret.token, obs });
-  registerObsRoutes(app, { obs, episodes });
+  registerObsRoutes(app, { obs, episodes, clock, scheduler });
   registerWs(app, { runtime, clock, version, instanceId, heartbeatMs: opts.heartbeatMs ?? 1_000 });
   app.addHook('onClose', async () => {
     await obs.stop();

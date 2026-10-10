@@ -2,9 +2,10 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { Episode } from '@olc/shared';
+import type { Clock, Scheduler } from '../clock/clock';
 import type { DeckItem } from '../engine/index';
 import type { ObsData } from '../obs/client';
-import type { ObsService } from '../obs/obs-service';
+import type { ObsService, ObsStatus } from '../obs/obs-service';
 import type { DocumentRepository } from '../persistence/repository';
 
 /** One problem found by Check OBS (SPEC F7). `blockId` is the offending block, or `null` for whole-OBS issues. */
@@ -18,9 +19,14 @@ export interface Issue {
 export interface ObsRoutesContext {
   obs: Pick<ObsService, 'status' | 'sceneNames' | 'deckItems' | 'client'>;
   episodes: DocumentRepository<Episode>;
+  clock: Clock;
+  scheduler: Scheduler;
 }
 
 const CheckBody = z.object({ episodeId: z.string().min(1) });
+
+/** An OBS request that never settles must not hang Check OBS: the input read is raced against this. */
+const INPUT_READ_TIMEOUT_MS = 4_000;
 
 const NOT_CONNECTED: Issue = {
   severity: 'error',
@@ -39,9 +45,13 @@ export function registerObsRoutes(app: FastifyInstance, ctx: ObsRoutesContext): 
   });
 
   app.get('/api/deck/items', async (_req, reply) => {
-    if (ctx.obs.status().connection !== 'connected') return reply.code(409).send({ error: 'obs_not_connected' });
+    const status = ctx.obs.status();
+    if (status.connection !== 'connected') return reply.code(409).send({ error: 'obs_not_connected' });
+    // Only the vendor genuinely being missing is a 404: a deck that is present but has not completed its first
+    // read yet is a "come back later", not an absent plugin.
+    if (status.deck?.capability === 'absent') return reply.code(404).send({ error: 'deck_absent' });
     const items = ctx.obs.deckItems();
-    if (items === null) return reply.code(404).send({ error: 'deck_absent' });
+    if (items === null) return reply.code(409).send({ error: 'deck_not_ready' });
     return { items: withOccurrences(items) };
   });
 
@@ -50,17 +60,34 @@ export function registerObsRoutes(app: FastifyInstance, ctx: ObsRoutesContext): 
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_body' });
     const episode = await ctx.episodes.get(parsed.data.episodeId);
     if (episode === undefined) return reply.code(404).send({ error: 'not_found' });
-    const status = ctx.obs.status();
-    if (status.connection !== 'connected') {
-      return { connected: false, obsWebSocketVersion: status.obsWebSocketVersion, deck: status.deck, issues: [NOT_CONNECTED] };
-    }
+    const before = ctx.obs.status();
+    if (before.connection !== 'connected') return notConnectedResponse(before);
+    const issues = await checkIssues(ctx, episode);
+    // The reads inside `checkIssues` (the input list above all) can outlive the connection: never answer with
+    // issues from one snapshot labelled as a connected OBS that has since dropped.
+    const after = ctx.obs.status();
+    if (after.connection !== 'connected') return notConnectedResponse(after);
     return {
       connected: true,
-      obsWebSocketVersion: status.obsWebSocketVersion,
-      deck: status.deck,
-      issues: await checkIssues(ctx, episode),
+      obsWebSocketVersion: before.obsWebSocketVersion,
+      deck: before.deck,
+      issues,
     };
   });
+}
+
+function notConnectedResponse(status: ObsStatus): {
+  connected: false;
+  obsWebSocketVersion: string | null;
+  deck: ObsStatus['deck'];
+  issues: Issue[];
+} {
+  return {
+    connected: false,
+    obsWebSocketVersion: status.obsWebSocketVersion,
+    deck: status.deck,
+    issues: [NOT_CONNECTED],
+  };
 }
 
 /** Adds the 0-based count of earlier items sharing the same path, used by the editor to create media elements. */
@@ -121,7 +148,7 @@ async function readInputs(ctx: ObsRoutesContext): Promise<Set<string> | null> {
   const client = ctx.obs.client();
   if (client === null) return null;
   try {
-    const res = await client.call('GetInputList');
+    const res = await withTimeout(ctx, client.call('GetInputList'));
     const raw = Array.isArray(res.inputs) ? res.inputs : [];
     const names = new Set<string>();
     for (const entry of raw as ObsData[]) {
@@ -131,6 +158,35 @@ async function readInputs(ctx: ObsRoutesContext): Promise<Set<string> | null> {
   } catch {
     return null;
   }
+}
+
+/**
+ * Resolves with `promise`, or rejects after `INPUT_READ_TIMEOUT_MS` on the injected scheduler. An OBS request
+ * that never settles must not hang Check OBS; a timeout is treated like any other failed read, and the losing
+ * promise's late result is dropped.
+ */
+function withTimeout<T>(ctx: ObsRoutesContext, promise: Promise<T>): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const cancel = ctx.scheduler.setTimer(ctx.clock.now() + INPUT_READ_TIMEOUT_MS, () => {
+      settled = true;
+      reject(new Error('GetInputList timed out'));
+    });
+    promise.then(
+      (value) => {
+        if (settled) return;
+        settled = true;
+        cancel();
+        resolve(value);
+      },
+      (err: unknown) => {
+        if (settled) return;
+        settled = true;
+        cancel();
+        reject(err);
+      },
+    );
+  });
 }
 
 function deckIssues(ctx: ObsRoutesContext, episode: Episode): Issue[] {
