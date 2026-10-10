@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-import { readFile, stat, writeFile } from 'node:fs/promises';
+import { readFile, stat, utimes, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { InstanceLockedError, acquireLock, olcInstanceAlive } from '../../src/app/instance-lock';
@@ -129,14 +129,98 @@ describe('acquireLock', () => {
 });
 
 describe('olcInstanceAlive', () => {
-  it('is false when runtime.json is missing', async () => {
+  it('is false when there is no lock file', async () => {
     const paths = dataPaths(await tempDir());
-    expect(await olcInstanceAlive(paths)(4242)).toBe(false);
+    expect(await olcInstanceAlive(paths, paths.lock, { isPidAlive: () => true })(4242)).toBe(false);
   });
 
-  it('is false when the recorded port does not answer', async () => {
-    const paths = dataPaths(await tempDir());
+  it('is false when the lock is old and the recorded port does not answer', async () => {
+    const dir = await tempDir();
+    const paths = dataPaths(dir);
+    await writeFile(paths.lock, '4242');
+    const now = Date.now();
+    await utimes(paths.lock, new Date(now - 60_000), new Date(now - 60_000));
     await writeJsonAtomic(paths.runtime, { port: 1, pid: 4242, instanceId: 'i' });
-    expect(await olcInstanceAlive(paths)(4242)).toBe(false);
+    const alive = olcInstanceAlive(paths, paths.lock, {
+      now: () => now,
+      uptimeS: () => 10_000,
+      isPidAlive: () => true,
+      fetchImpl: async () => {
+        throw new Error('connection refused');
+      },
+    });
+    expect(await alive(4242)).toBe(false);
+  });
+
+  it('is true while the owner is still starting (lock younger than 30 s)', async () => {
+    const dir = await tempDir();
+    const paths = dataPaths(dir);
+    await writeFile(paths.lock, '4242');
+    const now = Date.now();
+    await utimes(paths.lock, new Date(now - 10_000), new Date(now - 10_000));
+    const alive = olcInstanceAlive(paths, paths.lock, { now: () => now, uptimeS: () => 10_000, isPidAlive: () => true });
+    expect(await alive(4242)).toBe(true);
+  });
+
+  it('is false when the lock is old and no runtime.json exists', async () => {
+    const dir = await tempDir();
+    const paths = dataPaths(dir);
+    await writeFile(paths.lock, '4242');
+    const now = Date.now();
+    await utimes(paths.lock, new Date(now - 60_000), new Date(now - 60_000));
+    const alive = olcInstanceAlive(paths, paths.lock, { now: () => now, uptimeS: () => 10_000, isPidAlive: () => true });
+    expect(await alive(4242)).toBe(false);
+  });
+
+  it('is false when the lock predates the last boot, even with a healthy runtime.json', async () => {
+    const dir = await tempDir();
+    const paths = dataPaths(dir);
+    const now = Date.now();
+    const uptimeS = 10_000;
+    await writeFile(paths.lock, '4242');
+    const beforeBoot = now - uptimeS * 1000 - 60_000;
+    await utimes(paths.lock, new Date(beforeBoot), new Date(beforeBoot));
+    await writeJsonAtomic(paths.runtime, { port: 9, pid: 4242, instanceId: 'i' });
+    let fetched = 0;
+    const alive = olcInstanceAlive(paths, paths.lock, {
+      now: () => now,
+      uptimeS: () => uptimeS,
+      isPidAlive: () => true,
+      fetchImpl: async () => {
+        fetched++;
+        return new Response(JSON.stringify({ version: 'x', instanceId: 'i' }), { status: 200 });
+      },
+    });
+    expect(await alive(4242)).toBe(false);
+    expect(fetched).toBe(0);
+  });
+
+  it('is false when the owner pid is not alive', async () => {
+    const dir = await tempDir();
+    const paths = dataPaths(dir);
+    await writeFile(paths.lock, '4242');
+    expect(await olcInstanceAlive(paths, paths.lock, { isPidAlive: () => false })(4242)).toBe(false);
+  });
+
+  it('is true when an old lock answers health on a later attempt', async () => {
+    const dir = await tempDir();
+    const paths = dataPaths(dir);
+    await writeFile(paths.lock, '4242');
+    const now = Date.now();
+    await utimes(paths.lock, new Date(now - 60_000), new Date(now - 60_000));
+    await writeJsonAtomic(paths.runtime, { port: 9, pid: 4242, instanceId: 'i' });
+    let calls = 0;
+    const alive = olcInstanceAlive(paths, paths.lock, {
+      now: () => now,
+      uptimeS: () => 10_000,
+      isPidAlive: () => true,
+      fetchImpl: async () => {
+        calls++;
+        if (calls < 2) throw new Error('not yet');
+        return new Response(JSON.stringify({ version: 'x', instanceId: 'i' }), { status: 200 });
+      },
+    });
+    expect(await alive(4242)).toBe(true);
+    expect(calls).toBe(2);
   });
 });

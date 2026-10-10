@@ -9,7 +9,7 @@ import { listenHost, loadSettings } from './settings';
 async function main(): Promise<void> {
   const paths = dataPaths(defaultDataDir());
   await mkdir(paths.root, { recursive: true });
-  const release = await acquireLock(paths.lock, process.pid, olcInstanceAlive(paths));
+  const release = await acquireLock(paths.lock, process.pid, olcInstanceAlive(paths, paths.lock));
   try {
     const settings = await loadSettings(paths.settings, (err) =>
       console.warn('[obs-live-clock] invalid settings; using defaults:', err),

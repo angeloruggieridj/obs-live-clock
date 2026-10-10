@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-import { open, readFile, rename, rm } from 'node:fs/promises';
+import { open, readFile, rename, rm, stat } from 'node:fs/promises';
+import { uptime as osUptime } from 'node:os';
 import { isNotFound } from '../persistence/json-file';
 import type { DataPaths } from './paths';
 
@@ -19,14 +20,50 @@ export function isProcessAlive(pid: number): boolean {
   }
 }
 
+export interface AliveDeps {
+  now?: () => number;
+  uptimeS?: () => number;
+  isPidAlive?: (pid: number) => boolean;
+  fetchImpl?: typeof fetch;
+}
+
+/** How long a freshly written lock is trusted while its owner is still starting. */
+const STARTUP_GRACE_MS = 30_000;
+/** Tolerance for clock differences between the boot time and the lock's mtime. */
+const BOOT_SLACK_MS = 5_000;
+const HEALTH_ATTEMPTS = 3;
+const HEALTH_TIMEOUT_MS = 1_500;
+const HEALTH_RETRY_MS = 500;
+
+const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
 /**
- * A checker that asks the running instance itself whether it still owns the lock. The lock file only
- * records a PID, and Windows recycles PIDs, so a live PID is not proof of a live instance. Instead read
- * `runtime.json` (written once the server is listening) and only trust a matching PID when that instance
- * answers on its port. Use `AbortSignal.timeout` so a hung instance cannot block startup forever.
+ * A checker that asks the running instance itself whether it still owns the lock. A live PID is not proof
+ * (Windows recycles PIDs), so the owner only counts as running when every one of these holds:
+ *   1. the PID is alive (`process.kill(pid, 0)`; `EPERM` counts as alive);
+ *   2. the lock was written after the last OS boot (a lock from before a reboot is stale even if its PID
+ *      has been reused since);
+ *   3. the lock is younger than 30 s (its owner is still starting), or `runtime.json` records the owner
+ *      PID and that instance answers `/api/health` with `version` and `instanceId`.
+ * The health probe retries a few times, each with a short timeout, so a momentarily stalled owner is not
+ * declared dead. The time sources and the PID probe are injectable so tests stay deterministic.
  */
-export function olcInstanceAlive(paths: DataPaths): (ownerPid: number) => Promise<boolean> {
+export function olcInstanceAlive(
+  paths: DataPaths,
+  lockPath: string,
+  { now = Date.now, uptimeS = osUptime, isPidAlive = isProcessAlive, fetchImpl = fetch }: AliveDeps = {},
+): (ownerPid: number) => Promise<boolean> {
   return async (ownerPid) => {
+    if (!isPidAlive(ownerPid)) return false;
+    let mtimeMs: number;
+    try {
+      mtimeMs = (await stat(lockPath)).mtimeMs;
+    } catch {
+      return false;
+    }
+    const current = now();
+    if (mtimeMs <= current - uptimeS() * 1000 - BOOT_SLACK_MS) return false;
+    if (mtimeMs > current - STARTUP_GRACE_MS) return true;
     let record: { pid?: unknown; port?: unknown };
     try {
       record = JSON.parse(await readFile(paths.runtime, 'utf8')) as { pid?: unknown; port?: unknown };
@@ -36,14 +73,20 @@ export function olcInstanceAlive(paths: DataPaths): (ownerPid: number) => Promis
     if (record === null || typeof record !== 'object' || record.pid !== ownerPid || typeof record.port !== 'number') {
       return false;
     }
-    try {
-      const res = await fetch(`http://127.0.0.1:${record.port}/api/health`, { signal: AbortSignal.timeout(1_500) });
-      if (!res.ok) return false;
-      const body = (await res.json()) as Record<string, unknown>;
-      return body !== null && typeof body === 'object' && 'version' in body && 'instanceId' in body;
-    } catch {
-      return false;
+    for (let attempt = 0; attempt < HEALTH_ATTEMPTS; attempt++) {
+      if (attempt > 0) await delay(HEALTH_RETRY_MS);
+      try {
+        const res = await fetchImpl(`http://127.0.0.1:${record.port}/api/health`, {
+          signal: AbortSignal.timeout(HEALTH_TIMEOUT_MS),
+        });
+        if (!res.ok) continue;
+        const body = (await res.json()) as Record<string, unknown>;
+        if (body !== null && typeof body === 'object' && 'version' in body && 'instanceId' in body) return true;
+      } catch {
+        // A refused or timed-out attempt is not proof of death; try again until the attempts are exhausted.
+      }
     }
+    return false;
   };
 }
 
