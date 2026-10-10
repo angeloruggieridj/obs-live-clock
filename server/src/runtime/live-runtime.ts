@@ -46,10 +46,20 @@ export class LiveRuntime {
   private disposed = false;
   private readonly listeners = new Set<() => void>();
   private persisting: Promise<void> = Promise.resolve();
+  /** Cached `wall - now` offset; keeps wall times integer and stable across projection calls. */
+  private wallOffset: number | null = null;
 
   constructor(private readonly deps: RuntimeDeps) {}
 
-  readonly toWall = (mono: number): number => mono + (this.deps.clock.wall() - this.deps.clock.now());
+  readonly toWall = (mono: number): number => {
+    const measured = this.deps.clock.wall() - this.deps.clock.now();
+    if (this.wallOffset === null) this.wallOffset = measured;
+    else if (Math.abs(measured - this.wallOffset) > 50) {
+      this.report(new Error(`Wall clock offset changed by ${measured - this.wallOffset} ms; re-sampling`));
+      this.wallOffset = measured;
+    }
+    return Math.round(mono + this.wallOffset);
+  };
 
   get episodeId(): string | null {
     return this.state?.episode.id ?? null;

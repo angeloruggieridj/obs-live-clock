@@ -3,7 +3,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { SOLO_FUTSAL_DECK, soloFutsalEpisode } from '@olc/shared/testing';
-import { FakeTime } from '../../src/clock/clock';
+import { FakeTime, systemClock, systemScheduler } from '../../src/clock/clock';
 import { LiveJournal } from '../../src/persistence/journal';
 import { SnapshotStore } from '../../src/persistence/snapshot-store';
 import { commandToInput } from '../../src/runtime/commands';
@@ -110,6 +110,34 @@ describe('LiveRuntime', () => {
     const block = restarted.presenterView()?.block;
     expect(block?.index).toBe(0);
     expect(block?.anchor).toMatchObject({ kind: 'countdown', source: 'estimated' });
+  });
+
+  it('toWall is integer and stable while the state is unchanged', async () => {
+    const dir = await tempDir();
+    const runtime = new LiveRuntime({
+      clock: systemClock,
+      scheduler: systemScheduler(systemClock),
+      snapshots: new SnapshotStore(join(dir, 'live', 'snapshot.json')),
+      journalFor: (id) => new LiveJournal(join(dir, 'live', `${id}.log.jsonl`)),
+    });
+    await runtime.load(soloFutsalEpisode());
+    runtime.dispatch({ type: 'SourceRestored' });
+    runtime.dispatch({ type: 'DeckPlaylistChanged', items: SOLO_FUTSAL_DECK.map((i) => ({ ...i })) });
+    runtime.dispatch({ type: 'ProgramSceneChanged', scene: 'CAM 1', deckOnProgram: false });
+    runtime.dispatch({ type: 'OutputChanged', output: 'rec', state: 'started' });
+
+    const samples: string[] = [];
+    for (let i = 0; i < 5; i++) {
+      samples.push(JSON.stringify(runtime.presenterView()));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    expect(new Set(samples).size).toBe(1);
+
+    const view = runtime.presenterView()!;
+    for (const anchor of [view.block?.anchor, view.onAir?.anchor, view.programEnd?.anchor]) {
+      if (anchor?.kind === 'countdown') expect(Number.isInteger(anchor.endsAt)).toBe(true);
+    }
+    runtime.dispose();
   });
 
   it('unload clears the snapshot, so a restart resumes nothing', async () => {

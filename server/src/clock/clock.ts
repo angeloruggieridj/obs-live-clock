@@ -12,7 +12,7 @@ export interface Scheduler {
 }
 
 export const systemClock: Clock = {
-  now: () => performance.timeOrigin + performance.now(),
+  now: () => Math.round(performance.timeOrigin + performance.now()),
   wall: () => Date.now(),
 };
 
