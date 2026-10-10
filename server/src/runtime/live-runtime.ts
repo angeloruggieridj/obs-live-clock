@@ -95,6 +95,35 @@ export class LiveRuntime {
     await this.flush();
   }
 
+  /**
+   * Apply an edited rundown to the loaded episode without losing live runtime state. Only a loaded episode
+   * still in preshow is reloaded: a live episode is refused before this is reached, and an ended show keeps
+   * its as-run state. Only `episode`, `slots`, `slotRt` and `blockRt` are rebuilt; everything else the
+   * engine carried from OBS or the operator is copied over so the message, outputs, program, deck, media,
+   * control and decisions survive an edit. The journal is unchanged: it is the same episode.
+   */
+  async reloadEpisode(episode: Episode): Promise<void> {
+    const prev = this.state;
+    if (prev === null || prev.episode.id !== episode.id || prev.phase !== 'preshow') return;
+    const next = createLiveState(episode);
+    next.obs = prev.obs;
+    next.outputs = prev.outputs;
+    next.recPausedAt = prev.recPausedAt;
+    next.control = prev.control;
+    next.program = prev.program;
+    next.deck = prev.deck;
+    next.media = prev.media;
+    next.offScript = prev.offScript;
+    next.message = prev.message;
+    next.decisions = prev.decisions;
+    next.nextDecisionId = prev.nextDecisionId;
+    this.state = next;
+    this.enqueue(() => this.saveSnapshot());
+    this.reschedule();
+    this.notify();
+    await this.flush();
+  }
+
   async unload(): Promise<void> {
     if (this.state?.phase === 'live') throw new LiveRunningError(this.state.episode.id);
     this.cancel();

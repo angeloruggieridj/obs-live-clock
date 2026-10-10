@@ -93,6 +93,37 @@ describe('live control', () => {
     expect(view.rows[0].blockName).toBe('Primo blocco rinominato');
   });
 
+  it('keeps the live runtime state when the loaded preshow episode is edited', async () => {
+    const h = await withEpisode();
+    await h.app.inject({ method: 'POST', url: '/api/live/load', payload: { episodeId: 'ep-1' } });
+    await h.app.inject({ method: 'POST', url: '/api/messages/send', payload: { text: 'CIAO', dismiss: { kind: 'manual' } } });
+    h.runtime.dispatch({ type: 'SourceRestored' });
+    const ep = (await h.app.inject({ method: 'GET', url: '/api/episodes/ep-1' })).json();
+    ep.blocks[0].name = 'Primo blocco rinominato';
+    const put = await h.app.inject({ method: 'PUT', url: '/api/episodes/ep-1', payload: ep });
+    expect(put.statusCode).toBe(200);
+    const control = (await h.app.inject({ method: 'GET', url: '/api/live/view?role=control' })).json();
+    expect(control.rows[0].blockName).toBe('Primo blocco rinominato');
+    const presenter = (await h.app.inject({ method: 'GET', url: '/api/live/view?role=presenter' })).json();
+    expect(presenter.message).toEqual({ text: 'CIAO' });
+    expect(presenter.status.obs).toBe('ok');
+  });
+
+  it('keeps the as-run state when an ended episode is edited', async () => {
+    const h = await withEpisode();
+    await h.app.inject({ method: 'POST', url: '/api/live/load', payload: { episodeId: 'ep-1' } });
+    await h.app.inject({ method: 'POST', url: '/api/live/command', payload: { name: 'start_program' } });
+    await h.app.inject({ method: 'POST', url: '/api/live/command', payload: { name: 'end_program' } });
+    expect(h.runtime.phase).toBe('ended');
+    const ep = (await h.app.inject({ method: 'GET', url: '/api/episodes/ep-1' })).json();
+    ep.blocks[0].name = 'Primo blocco rinominato';
+    const put = await h.app.inject({ method: 'PUT', url: '/api/episodes/ep-1', payload: ep });
+    expect(put.statusCode).toBe(200);
+    expect(h.runtime.phase).toBe('ended');
+    const control = (await h.app.inject({ method: 'GET', url: '/api/live/view?role=control' })).json();
+    expect(control.rows[0].blockName).toBe('Primo blocco');
+  });
+
   it('loads an episode and serves both views', async () => {
     const h = await withEpisode();
     expect((await h.app.inject({ method: 'GET', url: '/api/live/view?role=presenter' })).json()).toEqual({ error: 'no_episode' });
