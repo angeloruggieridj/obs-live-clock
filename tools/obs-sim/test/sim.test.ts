@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import OBSWebSocket from 'obs-websocket-js/json';
+import { WebSocket } from 'ws';
 import { afterEach, describe, expect, it } from 'vitest';
 import { startObsSim, type ObsSim, type ObsSimOptions } from '../src/index';
 
@@ -22,6 +23,7 @@ const DECK = {
 
 const sims: ObsSim[] = [];
 const clients: OBSWebSocket[] = [];
+const rawSockets: WebSocket[] = [];
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -61,7 +63,21 @@ function rawCall(obs: OBSWebSocket, requestType: string, requestData?: Record<st
   return call(requestType, requestData);
 }
 
+/** A raw obs-websocket client that can speak the protocol by hand (to test the pre-Identify gate). */
+async function rawConnect(sim: ObsSim): Promise<{ socket: WebSocket; closed: Promise<number> }> {
+  const socket = new WebSocket(`ws://127.0.0.1:${sim.port}`, 'obswebsocket.json');
+  rawSockets.push(socket);
+  await new Promise<void>((resolve, reject) => {
+    socket.once('message', () => resolve());
+    socket.once('error', reject);
+    socket.once('close', (code) => reject(new Error(`closed before Hello: ${code}`)));
+  });
+  const closed = new Promise<number>((resolve) => socket.once('close', (code) => resolve(code)));
+  return { socket, closed };
+}
+
 afterEach(async () => {
+  while (rawSockets.length > 0) rawSockets.pop()!.terminate();
   while (clients.length > 0) await clients.pop()!.disconnect().catch(() => undefined);
   while (sims.length > 0) await sims.pop()!.close();
 });
@@ -140,5 +156,61 @@ describe('obs-sim', () => {
     const closed = new Promise<number>((resolve) => obs.on('ConnectionClosed', (error) => resolve(error.code)));
     sim.dropConnections();
     expect(await closed).toBe(1006);
+  });
+
+  it('binds loopback by default and honours options.host', async () => {
+    const sim = await start();
+    const obs = await connected(sim);
+    expect((await obs.call('GetVersion')).obsWebSocketVersion).toBe('5.5.0');
+
+    const other = await start({ host: '127.0.0.2' });
+    const direct = new OBSWebSocket();
+    clients.push(direct);
+    const hello = await direct.connect(`ws://127.0.0.2:${other.port}`);
+    expect(hello.negotiatedRpcVersion).toBe(1);
+
+    const loopback = new OBSWebSocket();
+    clients.push(loopback);
+    await expect(loopback.connect(`ws://127.0.0.1:${other.port}`)).rejects.toBeTruthy();
+  });
+
+  it('closes a request sent before Identify with 4007, password or not', async () => {
+    const locked = await start({ password: 'pw' });
+    const a = await rawConnect(locked);
+    a.socket.send(JSON.stringify({ op: 6, d: { requestType: 'GetVersion', requestId: 'r1' } }));
+    expect(await a.closed).toBe(4007);
+
+    const open = await start();
+    const b = await rawConnect(open);
+    b.socket.send(JSON.stringify({ op: 6, d: { requestType: 'GetVersion', requestId: 'r2' } }));
+    expect(await b.closed).toBe(4007);
+  });
+
+  it('delivers no events to an unidentified socket', async () => {
+    const sim = await start();
+    const raw = await rawConnect(sim);
+    const seen: unknown[] = [];
+    raw.socket.on('message', (data) => seen.push(JSON.parse(data.toString())));
+    sim.setProgram('CAM 2');
+    await delay(100);
+    expect(seen).toEqual([]);
+  });
+
+  it('closes a second Identify with 4008', async () => {
+    const sim = await start();
+    const raw = await rawConnect(sim);
+    const identified = new Promise<void>((resolve) => raw.socket.once('message', () => resolve()));
+    raw.socket.send(JSON.stringify({ op: 1, d: { rpcVersion: 1 } }));
+    await identified;
+    raw.socket.send(JSON.stringify({ op: 1, d: { rpcVersion: 1 } }));
+    expect(await raw.closed).toBe(4008);
+  });
+
+  it('answers 600 for an unknown scene, group or input like real OBS', async () => {
+    const sim = await start();
+    const obs = await connected(sim);
+    await expect(obs.call('GetSceneItemList', { sceneName: 'NoSuch' })).rejects.toMatchObject({ code: 600 });
+    await expect(obs.call('GetGroupSceneItemList', { sceneName: 'NoSuch' })).rejects.toMatchObject({ code: 600 });
+    await expect(obs.call('GetMediaInputStatus', { inputName: 'NoSuch' })).rejects.toMatchObject({ code: 600 });
   });
 });

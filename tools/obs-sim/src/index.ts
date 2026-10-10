@@ -27,6 +27,8 @@ export interface ObsSimDeck {
 export interface ObsSimOptions {
   /** `0` asks the OS for a free port; the bound port is exposed on the returned `ObsSim`. */
   port: number;
+  /** Interface to bind. Defaults to `127.0.0.1`: the sim is a dev tool and must not listen on the LAN. */
+  host?: string;
   /** When set, the Hello carries an auth challenge and Identify must answer it. */
   password?: string;
   scenes: Record<string, ObsSimSceneItem[]>;
@@ -51,6 +53,8 @@ export interface ObsSimMediaState {
 /** The obs-websocket v5 state machine and API a dev tool (or a test) drives. */
 export interface ObsSim {
   readonly port: number;
+  /** Number of client connections accepted so far; lets a test prove the server did not retry. */
+  readonly connections: number;
   close(): Promise<void>;
   setProgram(scene: string): void;
   setRecord(state: ObsSimOutputState): void;
@@ -80,7 +84,7 @@ const OP_REQUEST_RESPONSE = 7;
 
 const CODE_SUCCESS = 100;
 const CODE_UNKNOWN_REQUEST = 204;
-const CODE_VENDOR_NOT_FOUND = 600;
+const CODE_RESOURCE_NOT_FOUND = 600;
 
 const OUTPUT_STATE: Record<ObsSimOutputState, string> = {
   started: 'OBS_WEBSOCKET_OUTPUT_STARTED',
@@ -150,6 +154,7 @@ function num(value: unknown): number | null {
  * The simulator never logs, and never inspects the password beyond the auth hash: it is a dev tool.
  */
 export async function startObsSim(opts: ObsSimOptions): Promise<ObsSim> {
+  const host = opts.host ?? '127.0.0.1';
   const scenes = opts.scenes;
   const groups = opts.groups ?? {};
   const inputNames = opts.inputs ?? [];
@@ -163,6 +168,7 @@ export async function startObsSim(opts: ObsSimOptions): Promise<ObsSim> {
     deck: (opts.deck ?? null) === null ? null : toDeckState(opts.deck!),
   };
 
+  let connections = 0;
   const sockets = new Set<WebSocket>();
   const challenges = new Map<WebSocket, { challenge: string; salt: string }>();
   const identified = new Set<WebSocket>();
@@ -171,16 +177,19 @@ export async function startObsSim(opts: ObsSimOptions): Promise<ObsSim> {
     if (socket.readyState === socket.OPEN) socket.send(JSON.stringify({ op, d }));
   };
 
+  // Events only ever reach identified sockets: an unidentified client must see nothing.
   const broadcast = (eventType: string, eventData: unknown): void => {
-    for (const socket of sockets) send(socket, OP_EVENT, { eventType, eventIntent: 1, eventData });
+    for (const socket of identified) send(socket, OP_EVENT, { eventType, eventIntent: 1, eventData });
   };
 
   const wss = new WebSocketServer({
+    host,
     port: opts.port,
     handleProtocols: (protocols) => (protocols.has('obswebsocket.json') ? 'obswebsocket.json' : false),
   });
 
   wss.on('connection', (socket) => {
+    connections += 1;
     sockets.add(socket);
     socket.on('close', () => {
       sockets.delete(socket);
@@ -212,7 +221,19 @@ export async function startObsSim(opts: ObsSimOptions): Promise<ObsSim> {
     if (!isRecord(message)) return;
     const op = num(message.op);
     const d = isRecord(message.d) ? message.d : {};
-    if (op === OP_IDENTIFY) return onIdentify(socket, d);
+    if (op === OP_IDENTIFY) {
+      // A second Identify on an already-identified socket is a protocol error.
+      if (identified.has(socket)) {
+        socket.close(4008, 'AlreadyIdentified');
+        return;
+      }
+      return onIdentify(socket, d);
+    }
+    // Anything but Identify before identification is refused, exactly like real OBS.
+    if (!identified.has(socket)) {
+      socket.close(4007, 'NotIdentified');
+      return;
+    }
     if (op === OP_REQUEST) return onRequest(socket, d);
   }
 
@@ -254,10 +275,20 @@ export async function startObsSim(opts: ObsSimOptions): Promise<ObsSim> {
         });
       case 'GetCurrentProgramScene':
         return ok({ sceneName: state.program, currentProgramSceneName: state.program });
-      case 'GetSceneItemList':
-        return ok({ sceneItems: sceneItems(scenes[str(data.sceneName) ?? ''] ?? []) });
-      case 'GetGroupSceneItemList':
-        return ok({ sceneItems: sceneItems(groups[str(data.sceneName) ?? ''] ?? []) });
+      case 'GetSceneItemList': {
+        const scene = str(data.sceneName) ?? '';
+        if (!Object.prototype.hasOwnProperty.call(scenes, scene)) {
+          return fail(CODE_RESOURCE_NOT_FOUND, `No scene: ${scene}`);
+        }
+        return ok({ sceneItems: sceneItems(scenes[scene]) });
+      }
+      case 'GetGroupSceneItemList': {
+        const group = str(data.sceneName) ?? '';
+        if (!Object.prototype.hasOwnProperty.call(groups, group)) {
+          return fail(CODE_RESOURCE_NOT_FOUND, `No group: ${group}`);
+        }
+        return ok({ sceneItems: sceneItems(groups[group]) });
+      }
       case 'GetRecordStatus':
         return ok({ outputActive: state.record.active, outputPaused: state.record.paused });
       case 'GetStreamStatus':
@@ -265,7 +296,11 @@ export async function startObsSim(opts: ObsSimOptions): Promise<ObsSim> {
       case 'GetInputList':
         return ok({ inputs: inputNames.map((inputName, index) => ({ inputName, inputUuid: `sim-input-${index}` })) });
       case 'GetMediaInputStatus': {
-        const media = state.media.get(str(data.inputName) ?? '');
+        const input = str(data.inputName) ?? '';
+        if (!inputNames.includes(input)) {
+          return fail(CODE_RESOURCE_NOT_FOUND, `No input: ${input}`);
+        }
+        const media = state.media.get(input);
         return ok({
           mediaState: media?.state ?? 'OBS_MEDIA_STATE_NONE',
           mediaCursor: media?.cursor ?? 0,
@@ -284,7 +319,7 @@ export async function startObsSim(opts: ObsSimOptions): Promise<ObsSim> {
     const requestType = str(data.requestType) ?? '';
     const deck = state.deck;
     if (deck === null || vendorName !== VENDOR) {
-      return fail(CODE_VENDOR_NOT_FOUND, `No vendor: ${vendorName}`);
+      return fail(CODE_RESOURCE_NOT_FOUND, `No vendor: ${vendorName}`);
     }
     let payload: Record<string, unknown> | null = null;
     if (requestType === 'GetStatus') {
@@ -321,6 +356,9 @@ export async function startObsSim(opts: ObsSimOptions): Promise<ObsSim> {
   const { port } = wss.address() as AddressInfo;
 
   return {
+    get connections() {
+      return connections;
+    },
     port,
     close: () =>
       new Promise<void>((resolve) => {
