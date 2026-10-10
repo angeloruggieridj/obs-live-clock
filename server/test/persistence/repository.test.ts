@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-import { readdir, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { Format } from '@olc/shared';
@@ -54,5 +54,31 @@ describe('DocumentRepository', () => {
     await r.put(soloFutsalFormat());
     await r.put(soloFutsalFormat());
     expect(await readdir(dir)).toEqual(['solo-futsal.json']);
+  });
+
+  it('rejects ids that are not lowercase', async () => {
+    const { repo: r } = await repo();
+    await expect(r.get('Solo-Futsal')).rejects.toBeInstanceOf(InvalidIdError);
+    await expect(r.put({ ...soloFutsalFormat(), id: 'Solo-Futsal' })).rejects.toBeInstanceOf(InvalidIdError);
+  });
+
+  it('rejects windows reserved device names', async () => {
+    const { repo: r } = await repo();
+    for (const id of ['con', 'nul', 'com1', 'lpt9', 'aux.backup']) {
+      await expect(r.get(id)).rejects.toBeInstanceOf(InvalidIdError);
+    }
+  });
+
+  it('rejects unsafe ids on delete', async () => {
+    const { repo: r } = await repo();
+    await expect(r.delete('../x')).rejects.toBeInstanceOf(InvalidIdError);
+  });
+
+  it('removes the temp file when the rename fails', async () => {
+    const { repo: r, dir } = await repo();
+    await mkdir(dir, { recursive: true });
+    await mkdir(join(dir, 'blocked.json'));
+    await expect(r.put({ ...soloFutsalFormat(), id: 'blocked' })).rejects.toThrow();
+    expect((await readdir(dir)).filter((n) => n.endsWith('.tmp'))).toEqual([]);
   });
 });

@@ -4,7 +4,8 @@ import { join } from 'node:path';
 import type { z } from 'zod';
 import { isNotFound, readJson, writeJsonAtomic } from './json-file';
 
-const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
+const SAFE_ID = /^[a-z0-9][a-z0-9._-]{0,99}$/;
+const RESERVED_ID = /^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\.|$)/;
 
 export class InvalidIdError extends Error {
   constructor(readonly id: string) {
@@ -27,7 +28,7 @@ export class DocumentRepository<T extends { id: string }> {
   ) {}
 
   private file(id: string): string {
-    if (!SAFE_ID.test(id) || id.includes('..')) throw new InvalidIdError(id);
+    if (!SAFE_ID.test(id) || id.includes('..') || RESERVED_ID.test(id)) throw new InvalidIdError(id);
     return join(this.dir, `${id}.json`);
   }
 

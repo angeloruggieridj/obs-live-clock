@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import { randomUUID } from 'node:crypto';
-import { mkdir, open, readFile, rename } from 'node:fs/promises';
+import { mkdir, open, readFile, rename, rm } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { z } from 'zod';
 
@@ -12,14 +12,19 @@ export function isNotFound(err: unknown): boolean {
 export async function writeJsonAtomic(path: string, data: unknown): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   const tmp = `${path}.${randomUUID()}.tmp`;
-  const handle = await open(tmp, 'w');
   try {
-    await handle.writeFile(`${JSON.stringify(data, null, 2)}\n`, 'utf8');
-    await handle.sync();
-  } finally {
-    await handle.close();
+    const handle = await open(tmp, 'w');
+    try {
+      await handle.writeFile(`${JSON.stringify(data, null, 2)}\n`, 'utf8');
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    await rename(tmp, path);
+  } catch (err) {
+    await rm(tmp, { force: true }).catch(() => {});
+    throw err;
   }
-  await rename(tmp, path);
 }
 
 export async function readJsonFile(path: string): Promise<unknown | undefined> {
