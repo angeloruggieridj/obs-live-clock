@@ -68,8 +68,31 @@ export class ObsAdapter {
 
   async start(): Promise<void> {
     this.running = true;
-    // The initial sync must observe a real graph: a rejection here is reported and rethrown so
-    // start() rejects, the runtime stays obs:'lost' and the connection reconnects.
+    await this.sync();
+    if (!this.running) return;
+    this.attach();
+    this.armPoll();
+  }
+
+  /**
+   * Re-runs the initial sync (graph, Program scene, REC/stream reconciliation, SourceRestored and
+   * ProgramSceneChanged) on an already-running adapter, without re-attaching listeners or re-arming the poll.
+   * The service calls it when an episode is (re)loaded while OBS is connected, since `LiveRuntime.load()`
+   * resets the runtime to `obs: 'lost'`.
+   */
+  async resync(): Promise<void> {
+    if (!this.running) return;
+    await this.sync();
+  }
+
+  /**
+   * The shared sync sequence: `start()` calls it then attaches and arms the poll. After every await a
+   * `running` check aborts before anything is dispatched, so a `stop()` mid-sync cannot leak dispatches onto a
+   * stopped adapter. A rejection during the graph load is reported and rethrown, so `start()` rejects, the
+   * runtime stays `obs: 'lost'` and the connection reconnects.
+   */
+  private async sync(): Promise<void> {
+    this.lastMedia.clear();
     let graph: SceneGraphData;
     try {
       graph = await loadSceneGraph(this.deps.client);
@@ -77,20 +100,21 @@ export class ObsAdapter {
       this.deps.report(err);
       throw err;
     }
+    if (!this.running) return;
     this.sceneGraph = graph;
 
     const current = await this.deps.client.call('GetCurrentProgramScene');
+    if (!this.running) return;
     this.scene = this.readProgramScene(current);
 
     const rec = await this.deps.client.call('GetRecordStatus');
+    if (!this.running) return;
     const stream = await this.deps.client.call('GetStreamStatus');
+    if (!this.running) return;
     this.reconcileOutputs(rec, stream);
 
     this.deps.dispatch({ type: 'SourceRestored' });
-    if (this.scene !== null) this.dispatchProgram();
-
-    this.attach();
-    this.armPoll();
+    this.dispatchProgram();
   }
 
   /** Re-dispatches the Program scene with the current `deckOnProgram` (called when the deck's source changes). */
@@ -112,11 +136,12 @@ export class ObsAdapter {
     }
   }
 
-  private readProgramScene(data: ObsData): string | null {
+  private readProgramScene(data: ObsData): string {
     if (typeof data.sceneName === 'string') return data.sceneName;
     if (typeof data.currentProgramSceneName === 'string') return data.currentProgramSceneName;
-    this.deps.report(new Error('GetCurrentProgramScene returned no scene'));
-    return null;
+    const err = new Error('GetCurrentProgramScene returned no scene');
+    this.deps.report(err);
+    throw err;
   }
 
   private reconcileOutputs(rec: ObsData, stream: ObsData): void {
@@ -189,6 +214,7 @@ export class ObsAdapter {
   }
 
   private onPlayback(data: ObsData): void {
+    if (!this.running) return;
     const input = data.inputName;
     if (typeof input !== 'string') {
       this.deps.report(new Error('MediaInputPlayback event without inputName'));
@@ -264,7 +290,6 @@ export class ObsAdapter {
     let status: ObsData;
     try {
       status = await this.deps.client.call('GetMediaInputStatus', { inputName: input });
-      this.failedInputs.delete(input);
     } catch (err) {
       if (!this.failedInputs.has(input)) {
         this.failedInputs.add(input);
@@ -272,6 +297,8 @@ export class ObsAdapter {
       }
       return;
     }
+    if (!this.running) return;
+    this.failedInputs.delete(input);
     const cursorMs = status.mediaCursor;
     const durationMs = status.mediaDuration;
     if (!isFiniteNumber(cursorMs) || !isFiniteNumber(durationMs)) return;
@@ -281,8 +308,10 @@ export class ObsAdapter {
       const expected = last.cursorMs + (last.playing ? now - last.at : 0);
       if (Math.abs(cursorMs - expected) <= DRIFT_MS) return;
     }
-    this.lastMedia.set(input, { cursorMs, playing, durationMs, at: now });
-    this.deps.dispatch({ type: 'MediaStatus', input, playing, cursorMs, durationMs });
+    // Remember only what was accepted: a dropped dispatch must not suppress the next one.
+    if (this.deps.dispatch({ type: 'MediaStatus', input, playing, cursorMs, durationMs })) {
+      this.lastMedia.set(input, { cursorMs, playing, durationMs, at: now });
+    }
   }
 }
 
