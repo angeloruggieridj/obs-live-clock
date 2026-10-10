@@ -66,7 +66,7 @@ Final whole-branch review: **Opus**. If an implementer fails twice, a more capab
 - Monotonic time is epoch-anchored (`performance.timeOrigin + performance.now()`), so persisted engine times stay meaningful across a restart. This replaces the "re-base on resume" idea of TECH-DESIGN §5.7, and Task 10 updates that section.
 - The server listens on `127.0.0.1` unless `lanAccess` is enabled (NF3). Default port `4460`.
 - Data directory (DT-6): `%APPDATA%/obs-live-clock` (Windows), `~/Library/Application Support/obs-live-clock` (macOS), `$XDG_CONFIG_HOME/obs-live-clock` or `~/.config/obs-live-clock` (Linux). The `OLC_DATA_DIR` environment variable overrides it.
-- Document ids used as file names must match `^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$` and must not contain `..`.
+- Document ids used as file names must match `^[a-z0-9][a-z0-9._-]{0,99}$` (lowercase only), must not contain `..`, and must not be a Windows reserved device name (con, prn, aux, nul, com0-9, lpt0-9, optionally followed by a dot).
 - The WebSocket protocol version is `1`. A client with another version is refused with close code `4001`.
 - All durations and times are integer milliseconds.
 - Commit messages and PR descriptions contain **no AI attribution and no co-author trailers**. Do not push; the controller pushes.
