@@ -51,7 +51,13 @@ function parseEntries(raw: string): JournalEntry[] {
   for (const line of raw.split('\n')) {
     if (line.trim() === '') continue;
     try {
-      entries.push(JSON.parse(line) as JournalEntry);
+      const parsed = JSON.parse(line) as unknown;
+      const entry = parsed as { seq?: unknown; input?: unknown };
+      // A truncated write or a hand-edited file can leave valid JSON that is not an entry; keep the seq
+      // chain honest by ignoring anything without an integer seq and an input object.
+      if (parsed !== null && typeof parsed === 'object' && Number.isInteger(entry.seq) && typeof entry.input === 'object') {
+        entries.push(parsed as JournalEntry);
+      }
     } catch {
       // A torn line left by a crash mid-append: skip it.
     }

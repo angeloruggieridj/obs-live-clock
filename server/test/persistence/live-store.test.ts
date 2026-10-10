@@ -41,6 +41,16 @@ describe('LiveJournal', () => {
     expect((await j.readAll()).map((e) => e.seq)).toEqual([1, 2]);
   });
 
+  it('skips valid JSON lines that are not journal entries', async () => {
+    const path = join(await tempDir(), 'ep.log.jsonl');
+    const j = new LiveJournal(path);
+    await j.append({ type: 'Tick', at: 1 }, 1);
+    await appendFile(path, '{}\n123\n');
+    expect(await j.readAll()).toHaveLength(1);
+    await j.append({ type: 'Tick', at: 2 }, 2);
+    expect((await j.readAll()).map((e) => e.seq)).toEqual([1, 2]);
+  });
+
   it('is empty when the file does not exist', async () => {
     expect(await new LiveJournal(join(await tempDir(), 'none.jsonl')).readAll()).toEqual([]);
   });
