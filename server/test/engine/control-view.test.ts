@@ -12,7 +12,7 @@ describe('controlView', () => {
     expect(v.rows).toHaveLength(8);
     expect(v.rows[0]).toEqual({
       slot: 0, blockIndex: 0, blockName: 'Primo blocco', kind: 'studio', title: 'Primo blocco',
-      status: 'onair', provisional: false, durationMs: 0, durationSource: 'planned',
+      status: 'onair', provisional: false, durationMs: null, durationSource: 'planned',
       startedAtWall: toWall(T0), endedAtWall: null,
     });
     expect(v.rows[1]).toMatchObject({ kind: 'media', title: 'Servizio 1', status: 'pending', durationMs: 185_000, durationSource: 'measured' });

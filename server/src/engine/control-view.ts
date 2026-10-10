@@ -11,7 +11,7 @@ export interface RundownRow {
   title: string;
   status: SlotStatus;
   provisional: boolean;
-  durationMs: number;
+  durationMs: number | null;
   durationSource: Source;
   startedAtWall: number | null;
   endedAtWall: number | null;
@@ -71,7 +71,7 @@ export function controlView(s: LiveState, now: MonoMs, toWall: (mono: MonoMs) =>
         title: slot.title,
         status: rt.status,
         provisional: rt.provisional,
-        durationMs: d.ms,
+        durationMs: slot.kind === 'studio' ? null : d.ms,
         durationSource: degraded ? 'estimated' : d.source,
         startedAtWall: wall(rt.startedAt),
         endedAtWall: wall(rt.endedAt),
