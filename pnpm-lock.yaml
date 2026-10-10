@@ -194,6 +194,9 @@ importers:
         specifier: ^4.1.0
         version: 4.6.5
     devDependencies:
+      '@olc/obs-sim':
+        specifier: workspace:*
+        version: link:../tools/obs-sim
       '@types/ws':
         specifier: ^8.18.0
         version: 8.18.1
@@ -209,6 +212,22 @@ importers:
       zod:
         specifier: ^4.1.0
         version: 4.6.5
+
+  tools/obs-sim:
+    dependencies:
+      ws:
+        specifier: ^8.22.0
+        version: 8.22.0
+    devDependencies:
+      '@types/ws':
+        specifier: ^8.18.0
+        version: 8.18.1
+      obs-websocket-js:
+        specifier: ^5.0.8
+        version: 5.0.8
+      tsx:
+        specifier: ^4.23.0
+        version: 4.23.15
 
 packages:
 

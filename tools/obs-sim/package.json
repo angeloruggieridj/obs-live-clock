@@ -1,0 +1,20 @@
+{
+  "name": "@olc/obs-sim",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "GPL-2.0-or-later",
+  "exports": "./src/index.ts",
+  "scripts": {
+    "start": "tsx src/cli.ts",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "ws": "^8.22.0"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.0",
+    "obs-websocket-js": "^5.0.8",
+    "tsx": "^4.23.0"
+  }
+}

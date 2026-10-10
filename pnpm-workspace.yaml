@@ -1,5 +1,6 @@
 packages:
   - shared
   - server
+  - tools/obs-sim
 allowBuilds:
   esbuild: true
