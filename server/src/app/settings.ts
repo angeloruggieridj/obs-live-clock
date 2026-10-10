@@ -2,9 +2,17 @@
 import { z } from 'zod';
 import { readJson } from '../persistence/json-file';
 
+/** DT-5 remote mode: credentials used when no plugin hands them over at runtime. */
+export const ObsSettings = z.object({
+  host: z.string().min(1).default('127.0.0.1'),
+  port: z.number().int().min(1).max(65_535).default(4455),
+  password: z.string().optional(),
+});
+
 export const Settings = z.object({
   port: z.number().int().min(1).max(65_535).default(4460),
   lanAccess: z.boolean().default(false),
+  obs: ObsSettings.optional(),
 });
 export type Settings = z.infer<typeof Settings>;
 

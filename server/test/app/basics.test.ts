@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { InstanceLockedError, acquireLock, olcInstanceAlive } from '../../src/app/instance-lock';
 import { dataPaths, defaultDataDir } from '../../src/app/paths';
 import { ensureSecretToken } from '../../src/app/secret';
-import { listenHost, loadSettings } from '../../src/app/settings';
+import { Settings, listenHost, loadSettings } from '../../src/app/settings';
 import { writeJsonAtomic } from '../../src/persistence/json-file';
 import { tempDir } from '../support/tmp';
 
@@ -54,26 +54,59 @@ describe('settings', () => {
     expect(s).toEqual({ port: 4460, lanAccess: false });
     expect(errors).toHaveLength(1);
   });
+
+  it('parses the optional obs credentials with defaults', () => {
+    expect(Settings.parse({ obs: { port: 4456 } }).obs).toEqual({ host: '127.0.0.1', port: 4456 });
+  });
+
+  it('leaves obs undefined when it is absent', () => {
+    expect(Settings.parse({}).obs).toBeUndefined();
+  });
 });
 
 describe('ensureSecretToken', () => {
   it('creates a 256-bit hex token once and reuses it', async () => {
     const path = join(await tempDir(), 'secret.token');
-    const a = await ensureSecretToken(path);
-    expect(a).toMatch(/^[0-9a-f]{64}$/);
-    expect(await ensureSecretToken(path)).toBe(a);
+    const a = await ensureSecretToken(path, { platform: 'linux' });
+    expect(a.token).toMatch(/^[0-9a-f]{64}$/);
+    expect((await ensureSecretToken(path, { platform: 'linux' })).token).toBe(a.token);
   });
 
   it('replaces a malformed token', async () => {
     const path = join(await tempDir(), 'secret.token');
     await writeFile(path, 'short');
-    expect(await ensureSecretToken(path)).toMatch(/^[0-9a-f]{64}$/);
+    expect((await ensureSecretToken(path, { platform: 'linux' })).token).toMatch(/^[0-9a-f]{64}$/);
   });
 
   it.skipIf(process.platform === 'win32')('is readable only by the owner (POSIX)', async () => {
     const path = join(await tempDir(), 'secret.token');
     await ensureSecretToken(path);
     expect((await stat(path)).mode & 0o777).toBe(0o600);
+  });
+
+  it('restricts the ACL on win32 with the token path', async () => {
+    const path = join(await tempDir(), 'secret.token');
+    const restricted: string[] = [];
+    const result = await ensureSecretToken(path, {
+      platform: 'win32',
+      restrictAcl: async (target) => {
+        restricted.push(target);
+      },
+    });
+    expect(restricted).toEqual([path]);
+    expect(result.token).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it('reports a failing ACL as a warning and still returns the token', async () => {
+    const path = join(await tempDir(), 'secret.token');
+    const result = await ensureSecretToken(path, {
+      platform: 'win32',
+      restrictAcl: async () => {
+        throw new Error('icacls failed');
+      },
+    });
+    expect(result.token).toMatch(/^[0-9a-f]{64}$/);
+    expect(result.aclWarning).toContain('icacls failed');
   });
 });
 
