@@ -86,6 +86,9 @@ export function registerHttp(app: FastifyInstance, ctx: HttpContext): void {
     if (episode.id !== req.params.id) return reply.code(400).send({ error: 'id_mismatch' });
     if (ctx.runtime.isLive(episode.id)) return reply.code(409).send({ error: 'episode_live' });
     const saved = await ctx.episodes.put(episode);
+    // The show may have gone live while the write was in flight. The file is saved, but the runtime keeps
+    // the rundown that is on air: 409 tells the operator the edit never reached the live show.
+    if (ctx.runtime.isLive(episode.id)) return reply.code(409).send({ error: 'episode_live' });
     // Only a loaded, not-yet-live episode is reloaded: an ended show keeps its as-run state, and the
     // rewrite of the loaded episode must not wipe the live runtime state.
     if (ctx.runtime.episodeId === episode.id) await ctx.runtime.reloadEpisode(episode);
