@@ -11,7 +11,9 @@ async function main(): Promise<void> {
   await mkdir(paths.root, { recursive: true });
   const release = await acquireLock(paths.lock, process.pid, olcInstanceAlive(paths));
   try {
-    const settings = await loadSettings(paths.settings);
+    const settings = await loadSettings(paths.settings, (err) =>
+      console.warn('[obs-live-clock] invalid settings; using defaults:', err),
+    );
     const { app, instanceId } = await buildServer({ dataDir: paths.root, logger: true, lanAccess: settings.lanAccess });
     await app.listen({ port: settings.port, host: listenHost(settings) });
     await writeJsonAtomic(paths.runtime, { port: settings.port, pid: process.pid, instanceId });

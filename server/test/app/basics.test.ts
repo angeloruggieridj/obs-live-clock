@@ -46,10 +46,13 @@ describe('settings', () => {
     expect(listenHost(s)).toBe('0.0.0.0');
   });
 
-  it('rejects an invalid port', async () => {
+  it('falls back to the defaults and reports when the settings are invalid', async () => {
     const dir = await tempDir();
     await writeFile(join(dir, 'settings.json'), JSON.stringify({ port: 70_000 }));
-    await expect(loadSettings(join(dir, 'settings.json'))).rejects.toThrow();
+    const errors: unknown[] = [];
+    const s = await loadSettings(join(dir, 'settings.json'), (err) => errors.push(err));
+    expect(s).toEqual({ port: 4460, lanAccess: false });
+    expect(errors).toHaveLength(1);
   });
 });
 

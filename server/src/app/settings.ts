@@ -8,8 +8,14 @@ export const Settings = z.object({
 });
 export type Settings = z.infer<typeof Settings>;
 
-export async function loadSettings(path: string): Promise<Settings> {
-  return (await readJson(path, Settings)) ?? Settings.parse({});
+export async function loadSettings(path: string, onInvalid?: (err: unknown) => void): Promise<Settings> {
+  try {
+    return (await readJson(path, Settings)) ?? Settings.parse({});
+  } catch (err) {
+    // A corrupt or schema-invalid settings file must not stop the app: fall back to the defaults and report.
+    onInvalid?.(err);
+    return Settings.parse({});
+  }
 }
 
 /** NF3: localhost only unless LAN access is explicitly enabled. */
