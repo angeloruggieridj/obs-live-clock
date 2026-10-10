@@ -2654,6 +2654,18 @@ describe('buildServer', () => {
     c.close();
   });
 
+  it('closes websocket clients with 1001 on shutdown', async () => {
+    const { app } = await boot(await tempDir(), new FakeTime());
+    await app.listen({ port: 0, host: '127.0.0.1' });
+    const port = (app.server.address() as { port: number }).port;
+    const c = await connect(`ws://127.0.0.1:${port}/ws`);
+    c.send({ type: 'hello', role: 'presenter', protocol: PROTOCOL_VERSION });
+    await c.next((m) => m.type === 'welcome');
+    await app.close();
+    apps.pop();
+    expect(await c.closed).toBe(1001);
+  });
+
   it('restart mid-show: resumes the live episode with OBS lost', async () => {
     const dir = await tempDir();
     const time = new FakeTime();
@@ -2741,7 +2753,13 @@ export async function buildServer(opts: ServerOptions): Promise<BuiltServer> {
   await runtime.resume();
 
   const instanceId = randomUUID();
-  await app.register(websocket);
+  // Close live sockets with 1001 "going away" on shutdown (the plugin's default sends no code → clients see 1005).
+  await app.register(websocket, {
+    preClose(this: FastifyInstance, done: () => void) {
+      for (const client of this.websocketServer.clients) client.close(1001, 'server shutting down');
+      done();
+    },
+  });
   registerHttp(app, {
     formats: new DocumentRepository(paths.formats, Format, warnInvalid('format')),
     episodes: new DocumentRepository(paths.episodes, Episode, warnInvalid('episode')),
