@@ -52,6 +52,10 @@ Da sistemare prima degli eventi `DeckPlayback` a circa 1 Hz.
 
 ## Piano 7 — packaging
 
+- **Lock d'istanza: gare residue.** Rilevanti con l'avvio automatico al login.
+  - **Tre o più avvii simultanei.** Possono risultare entrambi proprietari del lock: la `rename` di ripristino sovrascrive il lock creato da un terzo avvio, perché su Windows la `rename` sovrascrive.
+  - **File di lock ancora vuoto.** Nell'istante tra `open('wx')` e la scrittura del pid, un secondo avvio vede il file vuoto e lo considera abbandonato. Rimedio: scrivere su un file temporaneo e poi creare un hard link al posto giusto.
+
 - **Avvio con lock già acquisito.**
   - Gli errori di avvio dopo l'acquisizione del lock sono gestiti nel Piano 2.
   - Va verificata la chiusura della console su Windows (SIGHUP) e il flush dei log prima di `process.exit`.
