@@ -56,4 +56,24 @@ describe('host and origin guard', () => {
     expect(messages).toHaveLength(0);
     ws.terminate();
   });
+
+  it('allows an unbracketed IPv6 interface address when LAN access is enabled', async () => {
+    const time = new FakeTime();
+    const server = await buildServer({
+      dataDir: await tempDir(),
+      clock: time,
+      scheduler: time,
+      heartbeatMs: 40,
+      lanAccess: true,
+      networkAddresses: () => ['2001:db8::5'],
+      hostname: () => 'studio-host',
+    });
+    apps.push(server.app);
+    const res = await server.app.inject({
+      method: 'GET',
+      url: '/api/health',
+      headers: { host: '[2001:db8::5]:4460' },
+    });
+    expect(res.statusCode).toBe(200);
+  });
 });

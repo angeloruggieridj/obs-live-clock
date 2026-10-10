@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import { randomUUID } from 'node:crypto';
-import { hostname, networkInterfaces } from 'node:os';
+import { hostname as osHostname, networkInterfaces } from 'node:os';
 import websocket from '@fastify/websocket';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { Episode, Format } from '@olc/shared';
-import { normalizeHostname, registerHostGuard } from '../api/host-guard';
+import { registerHostGuard } from '../api/host-guard';
 import { registerHttp } from '../api/http';
 import { registerWs } from '../api/ws';
 import { systemClock, systemScheduler, type Clock, type Scheduler } from '../clock/clock';
@@ -25,6 +25,10 @@ export interface ServerOptions {
   version?: string;
   /** TECH-DESIGN §10: when false (default) only loopback hostnames are accepted. */
   lanAccess?: boolean;
+  /** Source of local interface addresses for the LAN allowlist. Defaults to `os.networkInterfaces()`. */
+  networkAddresses?: () => string[];
+  /** Source of the machine hostname for the LAN allowlist. Defaults to `os.hostname()`. */
+  hostname?: () => string;
 }
 
 export interface BuiltServer {
@@ -36,17 +40,14 @@ export interface BuiltServer {
 /**
  * Hostnames accepted in Host/Origin headers. Loopback always; with LAN access also every local interface
  * address and the machine hostname. Compared on the hostname only, without the port and case-insensitively.
+ * Interface addresses are added verbatim: an IPv6 address such as `fe80::1:2` must not be run through the
+ * hostname normaliser, which strips everything after the last colon.
  */
-function allowedHostnames(lanAccess: boolean): Set<string> {
+function allowedHostnames(lanAccess: boolean, hostnameFn: () => string, addresses: () => string[]): Set<string> {
   const allowed = new Set<string>(['localhost', '127.0.0.1', '::1']);
   if (lanAccess) {
-    allowed.add(hostname().toLowerCase());
-    for (const addresses of Object.values(networkInterfaces())) {
-      for (const address of addresses ?? []) {
-        const h = normalizeHostname(address.address);
-        if (h !== null) allowed.add(h);
-      }
-    }
+    allowed.add(hostnameFn().toLowerCase());
+    for (const address of addresses()) allowed.add(address.toLowerCase());
   }
   return allowed;
 }
@@ -81,7 +82,11 @@ export async function buildServer(opts: ServerOptions): Promise<BuiltServer> {
   });
   // Registered after the websocket plugin so its onRequest hook (which marks upgrade requests) runs first;
   // our 403 then triggers the plugin's onResponse, which destroys the raw socket. Otherwise the client waits.
-  registerHostGuard(app, allowedHostnames(opts.lanAccess ?? false));
+  const hostnameFn = opts.hostname ?? osHostname;
+  const networkAddresses =
+    opts.networkAddresses ??
+    (() => Object.values(networkInterfaces()).flatMap((list) => (list ?? []).map((entry) => entry.address)));
+  registerHostGuard(app, allowedHostnames(opts.lanAccess ?? false, hostnameFn, networkAddresses));
   registerHttp(app, {
     formats: new DocumentRepository(paths.formats, Format, warnInvalid('format')),
     episodes: new DocumentRepository(paths.episodes, Episode, warnInvalid('episode')),
