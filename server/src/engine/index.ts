@@ -6,3 +6,4 @@ export { createLiveState } from './state';
 export { nextTickAt, reduce, type ReduceResult } from './reducer';
 export { computeTiming, type OnAirTiming, type Remaining, type TimingSnapshot } from './snapshot';
 export { presenterView, type Anchor, type PresenterView } from './projection';
+export { controlView, type ControlDecision, type ControlView, type RundownRow } from './control-view';
