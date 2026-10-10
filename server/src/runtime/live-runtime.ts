@@ -131,6 +131,9 @@ export class LiveRuntime {
     this.cancel();
     this.state = null;
     this.journal = null;
+    // The queued save belongs to the unloaded episode. Forget it so a following load() arms its own save
+    // *after* this clear, instead of coalescing into a save the clear is about to delete.
+    this.snapshotQueued = false;
     this.enqueue(() => this.deps.snapshots.clear());
     this.notify();
     await this.flush();
@@ -226,9 +229,16 @@ export class LiveRuntime {
     return this.state === null ? null : controlView(this.state, this.deps.clock.now(), this.toWall);
   }
 
-  /** Resolves once every queued persistence job has finished. */
-  flush(): Promise<void> {
-    return this.persisting;
+  /**
+   * Resolves once every queued persistence job has finished. A job may arm another (the coalesced snapshot
+   * is armed at the tail of an append), so keep draining until the queue stops growing.
+   */
+  async flush(): Promise<void> {
+    let head: Promise<void>;
+    do {
+      head = this.persisting;
+      await head;
+    } while (this.persisting !== head);
   }
 
   dispose(): void {
@@ -244,9 +254,9 @@ export class LiveRuntime {
   }
 
   /**
-   * Queue the journal append (one per input, in order) and request a snapshot save. The append and the save
-   * are independent: a throwing append is reported but must never stop the snapshot, or a restart would resume
-   * a stale state.
+   * Queue the journal append (one per input, in order). The snapshot is armed at the tail of the append so
+   * it can never be written ahead of the journal entries it reflects; a throwing append is reported but must
+   * never stop the snapshot, or a restart would resume a stale state.
    */
   private persist(input: EngineInput, wallAt: number): void {
     const journal = this.journal;
@@ -256,8 +266,8 @@ export class LiveRuntime {
       } catch (err) {
         this.report(err);
       }
+      this.requestSnapshot();
     });
-    this.requestSnapshot();
   }
 
   /**

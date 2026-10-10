@@ -26,19 +26,40 @@ export class LiveJournal {
       .catch(() => undefined)
       .then(async () => {
         if (!this.loaded) await this.prime();
-        this.seq = (this.seq ?? 0) + 1;
+        // Compute the next seq locally and only commit it once the write lands: a failed write must not
+        // burn a seq, or the next append would leave a gap in the chain.
+        const seq = (this.seq ?? 0) + 1;
         const lead = this.endsWithNewline ? '' : '\n';
-        await mkdir(dirname(this.path), { recursive: true });
-        await appendFile(this.path, `${lead}${JSON.stringify({ seq: this.seq, wallAt, input })}\n`, 'utf8');
+        try {
+          await mkdir(dirname(this.path), { recursive: true });
+          await appendFile(this.path, `${lead}${JSON.stringify({ seq, wallAt, input })}\n`, 'utf8');
+        } catch (err) {
+          // The write may have landed fully, partially (a torn line) or not at all. Drop the cache so the
+          // next append re-reads the file and continues from what is actually there, on a fresh line.
+          this.loaded = false;
+          throw err;
+        }
+        this.seq = seq;
         this.endsWithNewline = true;
       });
     this.chain = next;
     return next;
   }
 
+  /**
+   * Read the whole log. The read is chained behind any pending append (and future appends queue behind it),
+   * so it never observes a half-written entry and cannot lower the cached seq while a write is in flight.
+   */
   async readAll(): Promise<JournalEntry[]> {
-    const raw = await this.readRaw();
-    this.primeFrom(raw);
+    let raw = '';
+    const next = this.chain
+      .catch(() => undefined)
+      .then(async () => {
+        raw = await this.readRaw();
+        this.primeFrom(raw);
+      });
+    this.chain = next;
+    await next;
     return parseEntries(raw);
   }
 

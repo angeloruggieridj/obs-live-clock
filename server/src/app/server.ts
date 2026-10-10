@@ -125,8 +125,9 @@ export async function buildServer(opts: ServerOptions): Promise<BuiltServer> {
   registerWs(app, { runtime, clock, version, instanceId, heartbeatMs: opts.heartbeatMs ?? 1_000 });
   app.addHook('onClose', async () => {
     await obs.stop();
-    runtime.dispose();
+    // Flush persistence before disposing so a snapshot/journal write queued by the last dispatch lands.
     await runtime.flush();
+    runtime.dispose();
   });
   return { app, runtime, instanceId };
 }

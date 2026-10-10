@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { SOLO_FUTSAL_DECK, soloFutsalEpisode } from '@olc/shared/testing';
 import { FakeTime, systemClock, systemScheduler } from '../../src/clock/clock';
 import { LiveJournal } from '../../src/persistence/journal';
-import { SnapshotStore } from '../../src/persistence/snapshot-store';
+import { SnapshotStore, type LiveSnapshot } from '../../src/persistence/snapshot-store';
 import { commandToInput } from '../../src/runtime/commands';
 import { LiveRunningError, LiveRuntime, NoEpisodeError } from '../../src/runtime/live-runtime';
 import { makeRuntime } from '../support/runtime';
@@ -84,6 +84,67 @@ describe('LiveRuntime', () => {
     expect(snap.state).toEqual(runtime.getState());
     const entries = await new LiveJournal(join(dir, 'live', 'ep-2026-10-12.log.jsonl')).readAll();
     expect(entries).toHaveLength(50);
+    runtime.dispose();
+  });
+
+  it('writes the snapshot only after the journal appends it reflects', async () => {
+    const dir = await tempDir();
+    const time = new FakeTime();
+    const journalPath = join(dir, 'live', 'ep-2026-10-12.log.jsonl');
+
+    /** A save hook that records how many journal entries are on disk when the snapshot is written. */
+    class RecordingSnapshotStore extends SnapshotStore {
+      readonly entriesAtSave: number[] = [];
+      override async save(snap: LiveSnapshot): Promise<void> {
+        this.entriesAtSave.push((await new LiveJournal(journalPath).readAll()).length);
+        await super.save(snap);
+      }
+    }
+    const snapshots = new RecordingSnapshotStore(join(dir, 'live', 'snapshot.json'));
+    const runtime = new LiveRuntime({
+      clock: time,
+      scheduler: time,
+      snapshots,
+      journalFor: () => new LiveJournal(journalPath),
+    });
+
+    await runtime.load(soloFutsalEpisode());
+    snapshots.entriesAtSave.length = 0;
+
+    const n = 50;
+    for (let i = 0; i < n; i++) {
+      runtime.dispatch({ type: 'ProgramSceneChanged', scene: `CAM ${(i % 3) + 1}`, deckOnProgram: false });
+    }
+    await runtime.flush();
+
+    expect(snapshots.entriesAtSave.length).toBeGreaterThan(0);
+    expect(snapshots.entriesAtSave[0]).toBe(n);
+    const snap = JSON.parse(await readFile(join(dir, 'live', 'snapshot.json'), 'utf8'));
+    expect(snap.state).toEqual(runtime.getState());
+    runtime.dispose();
+  });
+
+  it('a load after an unflushed unload queues its save after the clear', async () => {
+    const dir = await tempDir();
+    const time = new FakeTime();
+    const journalFor = (id: string) => new LiveJournal(join(dir, 'live', `${id}.log.jsonl`));
+    const snapshots = new SnapshotStore(join(dir, 'live', 'snapshot.json'));
+    const runtime = new LiveRuntime({ clock: time, scheduler: time, snapshots, journalFor });
+
+    await runtime.load(soloFutsalEpisode());
+    // Queue changes but do not flush, so the coalesced snapshot save is not yet written.
+    for (let i = 0; i < 5; i++) {
+      runtime.dispatch({ type: 'ProgramSceneChanged', scene: `CAM ${i + 1}`, deckOnProgram: false });
+    }
+
+    const unloading = runtime.unload();
+    const loading = runtime.load(soloFutsalEpisode());
+    await Promise.all([unloading, loading]);
+    await runtime.flush();
+
+    const snap = JSON.parse(await readFile(join(dir, 'live', 'snapshot.json'), 'utf8'));
+    expect(snap.episodeId).toBe('ep-2026-10-12');
+    expect(snap.state).toEqual(runtime.getState());
     runtime.dispose();
   });
 

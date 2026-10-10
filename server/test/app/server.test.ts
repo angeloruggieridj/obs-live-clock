@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PROTOCOL_VERSION, type ServerMessage } from '@olc/shared';
 import { soloFutsalFormat } from '@olc/shared/testing';
 import { FakeTime } from '../../src/clock/clock';
@@ -65,6 +65,26 @@ describe('buildServer', () => {
     await app.close();
     apps.pop();
     expect(await c.closed).toBe(1001);
+  });
+
+  it('flushes persistence before disposing the runtime on shutdown', async () => {
+    const { app, runtime } = await boot(await tempDir(), new FakeTime());
+    const order: string[] = [];
+    const flush = runtime.flush.bind(runtime);
+    const dispose = runtime.dispose.bind(runtime);
+    vi.spyOn(runtime, 'flush').mockImplementation(async () => {
+      order.push('flush');
+      await flush();
+    });
+    vi.spyOn(runtime, 'dispose').mockImplementation(() => {
+      order.push('dispose');
+      dispose();
+    });
+
+    await app.close();
+    apps.pop();
+
+    expect(order).toEqual(['flush', 'dispose']);
   });
 
   it('restart mid-show: resumes the live episode with OBS lost', async () => {
