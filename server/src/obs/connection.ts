@@ -51,8 +51,8 @@ export class ObsConnection {
   private async attempt(gen: number): Promise<void> {
     if (gen !== this.generation || this.creds === null) return;
     this.setState('connecting');
-    const client = this.deps.clientFactory();
     try {
+      const client = this.deps.clientFactory();
       const info = await client.connect(`ws://${this.creds.host}:${this.creds.port}`, this.creds.password);
       if (gen !== this.generation) { await client.disconnect().catch(() => undefined); return; }
       this.client = client;
@@ -65,15 +65,15 @@ export class ObsConnection {
       try {
         await this.deps.hooks.onConnected(client, this._info);
       } catch (err) {
-        this.deps.hooks.report(err);
+        this.report(err);
         await client.disconnect().catch(() => undefined);
         this.onClosed(gen, client);
       }
     } catch (err) {
       if (gen !== this.generation) return;
-      if (err instanceof ObsAuthError) { this.deps.hooks.report(err); this.setState('auth_failed'); return; }
-      this.deps.hooks.report(err);
+      if (err instanceof ObsAuthError) { this.report(err); this.setState('auth_failed'); return; }
       this.setState('disconnected');
+      this.report(err);
       this.scheduleRetry(gen);
     }
   }
@@ -84,8 +84,9 @@ export class ObsConnection {
     const wasConnected = this._state === 'connected';
     this.setState('disconnected');
     if (wasConnected) {
-      try { this.deps.hooks.onDisconnected(); } catch (err) { this.deps.hooks.report(err); }
+      try { this.deps.hooks.onDisconnected(); } catch (err) { this.report(err); }
     }
+    this.disconnectQuietly(client);
     this.scheduleRetry(gen);
   }
 
@@ -106,8 +107,17 @@ export class ObsConnection {
     const c = this.client;
     this.client = null;
     const wasConnected = this._state === 'connected';
+    // Notify synchronously before awaiting teardown so SourceLost always precedes a later SourceRestored.
+    if (wasConnected) { try { this.deps.hooks.onDisconnected(); } catch (err) { this.report(err); } }
     if (c) await c.disconnect().catch(() => undefined);
-    if (wasConnected) { try { this.deps.hooks.onDisconnected(); } catch (err) { this.deps.hooks.report(err); } }
+  }
+
+  private report(err: unknown): void {
+    try { this.deps.hooks.report(err); } catch { /* a throwing reporter must not reject the attempt */ }
+  }
+
+  private disconnectQuietly(client: ObsClient): void {
+    try { void client.disconnect().catch((err) => this.report(err)); } catch (err) { this.report(err); }
   }
 
   private setState(s: ObsConnectionState): void { this._state = s; }
