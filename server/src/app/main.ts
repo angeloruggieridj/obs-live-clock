@@ -11,7 +11,7 @@ async function main(): Promise<void> {
   await mkdir(paths.root, { recursive: true });
   const release = await acquireLock(paths.lock);
   const settings = await loadSettings(paths.settings);
-  const { app, instanceId } = await buildServer({ dataDir: paths.root, logger: true });
+  const { app, instanceId } = await buildServer({ dataDir: paths.root, logger: true, lanAccess: settings.lanAccess });
   await app.listen({ port: settings.port, host: listenHost(settings) });
   await writeJsonAtomic(paths.runtime, { port: settings.port, pid: process.pid, instanceId });
 
