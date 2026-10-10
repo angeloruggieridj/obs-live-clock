@@ -110,6 +110,19 @@ describe('ResolveDecision', () => {
   });
 });
 
+describe('EndProgram', () => {
+  it('ends a live program, closing the current slot and started blocks', () => {
+    const s = run(liveState(), { type: 'EndProgram', at: T0 + 30_000 });
+    expect(s.phase).toBe('ended');
+    expect(s.slotRt[0]).toMatchObject({ status: 'done', endedAt: T0 + 30_000 });
+    expect(s.blockRt[0]).toMatchObject({ startedAt: T0, endedAt: T0 + 30_000 });
+  });
+
+  it('does nothing outside live', () => {
+    expect(reduce(freshState(), { type: 'EndProgram', at: T0 }).changed).toBe(false);
+  });
+});
+
 describe('estimated mode (OBS lost)', () => {
   it('hands over to the next block at the planned end, never past the last block', () => {
     const lost = run(liveState(), { type: 'SourceLost', at: T0 + 100_000 });

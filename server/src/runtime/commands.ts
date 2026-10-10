@@ -9,6 +9,8 @@ export function commandToInput(c: ClientCommand): WithoutAt<Command> {
   switch (c.name) {
     case 'start_program':
       return { type: 'StartProgram' };
+    case 'end_program':
+      return { type: 'EndProgram' };
     case 'next':
       return { type: 'Next' };
     case 'prev':

@@ -9,6 +9,7 @@ export type ClientRole = z.infer<typeof ClientRole>;
 
 export const ClientCommand = z.discriminatedUnion('name', [
   z.object({ name: z.literal('start_program') }),
+  z.object({ name: z.literal('end_program') }),
   z.object({ name: z.literal('next') }),
   z.object({ name: z.literal('prev') }),
   z.object({ name: z.literal('goto'), slot: z.number().int().nonnegative() }),

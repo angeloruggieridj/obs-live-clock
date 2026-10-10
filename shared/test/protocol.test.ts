@@ -30,5 +30,6 @@ describe('ClientCommand', () => {
       ClientCommand.safeParse({ name: 'send_message', text: 'STRINGI', dismiss: { kind: 'timeout', ms: 10 } }).success,
     ).toBe(false);
     expect(ClientCommand.safeParse({ name: 'resolve_decision', id: 1, choice: 'end' }).success).toBe(true);
+    expect(ClientCommand.safeParse({ name: 'end_program' }).success).toBe(true);
   });
 });

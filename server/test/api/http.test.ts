@@ -106,6 +106,19 @@ describe('live control', () => {
     expect((await h.app.inject({ method: 'POST', url: '/api/live/unload' })).statusCode).toBe(409);
   });
 
+  it('ends the program and then allows unload and reload', async () => {
+    const h = await withEpisode();
+    await h.app.inject({ method: 'POST', url: '/api/live/load', payload: { episodeId: 'ep-1' } });
+    const start = await h.app.inject({ method: 'POST', url: '/api/live/command', payload: { name: 'start_program' } });
+    expect(start.json()).toEqual({ changed: true });
+    const end = await h.app.inject({ method: 'POST', url: '/api/live/command', payload: { name: 'end_program' } });
+    expect(end.json()).toEqual({ changed: true });
+    expect(h.runtime.phase).toBe('ended');
+    expect((await h.app.inject({ method: 'POST', url: '/api/live/unload' })).statusCode).toBe(204);
+    const reload = await h.app.inject({ method: 'POST', url: '/api/live/load', payload: { episodeId: 'ep-1' } });
+    expect(reload.statusCode).toBe(200);
+  });
+
   it('public message endpoints send presets or free text and clear', async () => {
     const h = await withEpisode();
     await h.app.inject({ method: 'POST', url: '/api/live/load', payload: { episodeId: 'ep-1' } });

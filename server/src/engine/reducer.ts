@@ -203,6 +203,11 @@ function applyCommand(s: LiveState, c: Command): boolean {
       startProgram(s, c.at);
       return true;
 
+    case 'EndProgram':
+      if (s.phase !== 'live') return false;
+      endProgram(s, c.at);
+      return true;
+
     case 'Next': {
       if (s.phase !== 'live') return false;
       let target = position(s) + 1;

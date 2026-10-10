@@ -45,6 +45,7 @@ export type DomainEvent =
 
 export type Command =
   | { type: 'StartProgram'; at: MonoMs }
+  | { type: 'EndProgram'; at: MonoMs }
   | { type: 'Next'; at: MonoMs }
   | { type: 'Prev'; at: MonoMs }
   | { type: 'Goto'; at: MonoMs; slot: number }

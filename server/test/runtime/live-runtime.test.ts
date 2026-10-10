@@ -29,6 +29,7 @@ describe('commandToInput', () => {
     expect(commandToInput({ name: 'set_control', control: 'manual' })).toEqual({ type: 'SetControl', control: 'manual' });
     expect(commandToInput({ name: 'resolve_decision', id: 2, choice: 'end' })).toEqual({ type: 'ResolveDecision', id: 2, choice: 'end' });
     expect(commandToInput({ name: 'start_program' })).toEqual({ type: 'StartProgram' });
+    expect(commandToInput({ name: 'end_program' })).toEqual({ type: 'EndProgram' });
   });
 });
 
