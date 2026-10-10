@@ -100,6 +100,19 @@ describe('acquireLock', () => {
     await release();
   });
 
+  it.each(['', '  ', 'garbage', '1234x'])('takes over a lock whose content is %j', async (content) => {
+    const path = join(await tempDir(), 'instance.lock');
+    await writeFile(path, content);
+    let checked = 0;
+    const release = await acquireLock(path, 222, async () => {
+      checked++;
+      return false;
+    });
+    expect(await readFile(path, 'utf8')).toBe('222');
+    expect(checked).toBe(0);
+    await release();
+  });
+
   it('lets exactly one of two concurrent starters take over a stale lock', async () => {
     const path = join(await tempDir(), 'instance.lock');
     await writeFile(path, '999');

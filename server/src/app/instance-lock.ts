@@ -66,16 +66,23 @@ export async function acquireLock(
     await createLockFile(path, pid);
   } catch (err) {
     if ((err as { code?: unknown }).code !== 'EEXIST') throw err;
-    let owner: number;
+    let raw: string;
     try {
-      owner = Number.parseInt((await readFile(path, 'utf8')).trim(), 10);
+      raw = await readFile(path, 'utf8');
     } catch (readErr) {
       // The lock vanished between our failed create and this read: another starter is taking it over.
       if ((readErr as { code?: unknown }).code === 'ENOENT') throw new InstanceLockedError(0);
       throw readErr;
     }
-    if (Number.isInteger(owner) && owner !== pid && (await isRunningOwner(owner))) {
-      throw new InstanceLockedError(owner);
+    const trimmed = raw.trim();
+    const parsed = Number(trimmed);
+    // The lock only claims an owner when it holds a positive integer pid. An empty file (a power loss between
+    // open('wx') and writeFile) or any other garbage is not a claim: it is stale and we take it over without
+    // asking the checker.
+    const claimsPid = /^\d+$/.test(trimmed) && Number.isSafeInteger(parsed) && parsed > 0;
+    const owner = claimsPid ? parsed : 0;
+    if (claimsPid && parsed !== pid && (await isRunningOwner(parsed))) {
+      throw new InstanceLockedError(parsed);
     }
     // The owner is not running: take over. Rename the stale file away first: `rename` is atomic, so of two
     // concurrent starters only one moves that exact file. The move is then verified: if the file we moved no
@@ -92,13 +99,13 @@ export async function acquireLock(
     if (renamed) {
       let moved: string;
       try {
-        moved = (await readFile(stale, 'utf8')).trim();
+        moved = await readFile(stale, 'utf8');
       } catch (readErr) {
         // The file we renamed vanished under us: another starter is taking over. Back off.
         if ((readErr as { code?: unknown }).code === 'ENOENT') throw new InstanceLockedError(owner);
         throw readErr;
       }
-      if (moved !== String(owner)) {
+      if (moved !== raw) {
         // We grabbed a newer lock: restore it and back off instead of stealing it.
         try {
           await rename(stale, path);
