@@ -182,3 +182,34 @@ describe('time-based hand-over between adjacent studio blocks (OBS connected)', 
     expect(s.blockRt[0]!.startedBy).toBe('obs');
   });
 });
+
+describe('estimated hand-over during an out-of-order excursion', () => {
+  it('starts from the resume position, closes the interrupted returnSlot and is not ambiguous', () => {
+    // Servizio 1 airs out of order, interrupting the block-2 studio slot it was owed before.
+    let s = run(
+      liveState(),
+      { type: 'ProgramSceneChanged', at: T0 + 700_000, scene: 'BREAK', deckOnProgram: false },
+      { type: 'ProgramSceneChanged', at: T0 + 880_000, scene: 'CAM 1', deckOnProgram: false },
+      { type: 'DeckItemStarted', at: T0 + 900_000, index: 0, path: 'D:/media/servizio1.mp4', title: 'Servizio 1', durationMs: 185_000 },
+      { type: 'ProgramSceneChanged', at: T0 + 900_000, scene: 'PLAYOUT', deckOnProgram: true },
+    );
+    expect(s.cursor).toBe(1);
+    expect(s.returnSlot).toBe(4);
+
+    s = run(s, { type: 'SourceLost', at: T0 + 950_000 }, { type: 'Tick', at: T0 + 1_520_000 });
+
+    // Slots between the excursion slot and the resume position were observed: they must not be provisional.
+    expect(s.slotRt[3]!.provisional).toBe(false);
+    expect(s.slotRt[4]!.provisional).toBe(false);
+    // The interrupted returnSlot studio slot is closed rather than left on air.
+    expect(s.slotRt[4]!.status).toBe('done');
+    expect(s.slotRt.filter((r) => r.status === 'onair')).toHaveLength(1);
+
+    s = run(
+      s,
+      { type: 'SourceRestored', at: T0 + 1_520_000 },
+      { type: 'ProgramSceneChanged', at: T0 + 1_520_000, scene: 'CAM 1', deckOnProgram: false },
+    );
+    expect(s.ambiguous).toBe(false);
+  });
+});

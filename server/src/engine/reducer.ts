@@ -293,9 +293,13 @@ function applyTick(s: LiveState, at: MonoMs): boolean {
       const bi = currentBlockIndex(s);
       const end = bi >= 0 ? blockEndsAt(s, bi) : null;
       if (end === null || at < end || bi >= lastBlockIndex(s)) break;
-      const from = s.cursor;
+      const from = position(s);
       const target = firstSlotOfBlock(s, bi + 1);
-      s.returnSlot = null;
+      // The show resumes at `position(s)`, not at the out-of-order slot the cursor is on: the studio slot the
+      // excursion interrupted was really on air, so close it as the hand-over moves past it. `returnSlot` is
+      // kept: OBS has still to confirm the resume, so resync() must keep seeing the resume position unchanged
+      // rather than a confirmed forward move.
+      if (s.returnSlot !== null) closeSlot(s, s.returnSlot, end);
       moveTo(s, target, end, 'time');
       // Nothing after `from` was actually observed: the clock alone decided it. Mark it provisional so a
       // later restore can tell a real observation from a guess (see matcher.ts resync()). `from` itself is
