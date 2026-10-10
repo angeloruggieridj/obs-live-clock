@@ -98,6 +98,69 @@ describe('WebSocket hub', () => {
     c.close();
   });
 
+  it('survives a command that throws and answers with an internal error', async () => {
+    const s = await start();
+    await s.runtime.load(soloFutsalEpisode());
+    const c = await connect(s.url);
+    c.send({ type: 'hello', role: 'control', protocol: PROTOCOL_VERSION });
+    await c.next(is('welcome'));
+    await c.next(is('view'));
+    s.runtime.command = () => {
+      throw new TypeError('boom');
+    };
+    c.send({ type: 'command', id: 'x', command: { name: 'next' } });
+    expect(await c.next(is('error'))).toMatchObject({ type: 'error', id: 'x', code: 'internal' });
+    c.send({ type: 'time.ping', t0: 7 });
+    expect(await c.next(is('time.pong'))).toMatchObject({ type: 'time.pong', t0: 7 });
+    c.close();
+  });
+
+  it('isolates a throwing projection so the other role and the hub survive', async () => {
+    const s = await start(30);
+    await s.runtime.load(soloFutsalEpisode());
+    const presenter = await connect(s.url);
+    const control = await connect(s.url);
+    presenter.send({ type: 'hello', role: 'presenter', protocol: PROTOCOL_VERSION });
+    control.send({ type: 'hello', role: 'control', protocol: PROTOCOL_VERSION });
+    await presenter.next(is('view'));
+    await control.next(is('view'));
+    s.runtime.presenterView = () => {
+      throw new Error('boom');
+    };
+    s.runtime.command({ name: 'send_message', text: 'HELLO', dismiss: { kind: 'manual' } });
+    const v = (await control.next(
+      (m) => m.type === 'view' && (m.view as { presenter: { message: unknown } }).presenter.message != null,
+    )) as Extract<ServerMessage, { type: 'view' }>;
+    expect((v.view as { presenter: { message: unknown } }).presenter.message).toEqual({ text: 'HELLO' });
+    expect(await presenter.next(is('heartbeat'))).toBeTruthy();
+    presenter.close();
+    control.close();
+  });
+
+  it('keeps the id of a schema-invalid command', async () => {
+    const s = await start();
+    const c = await connect(s.url);
+    c.send({ type: 'command', id: 'bad', command: { name: 'goto', slot: -1 } });
+    expect(await c.next(is('error'))).toMatchObject({ type: 'error', id: 'bad', code: 'invalid_message' });
+    c.close();
+  });
+
+  it("carries each client's own view rev on heartbeats", async () => {
+    const s = await start(30);
+    await s.runtime.load(soloFutsalEpisode());
+    const presenter = await connect(s.url);
+    presenter.send({ type: 'hello', role: 'presenter', protocol: PROTOCOL_VERSION });
+    const pv = (await presenter.next(is('view'))) as Extract<ServerMessage, { type: 'view' }>;
+    const R = pv.rev;
+    const control = await connect(s.url);
+    control.send({ type: 'hello', role: 'control', protocol: PROTOCOL_VERSION });
+    await control.next(is('view'));
+    const hb = (await presenter.next(is('heartbeat'))) as Extract<ServerMessage, { type: 'heartbeat' }>;
+    expect(hb.rev).toBe(R);
+    presenter.close();
+    control.close();
+  });
+
   it('sends heartbeats and never resends an unchanged view', async () => {
     const s = await start(30);
     await s.runtime.load(soloFutsalEpisode());

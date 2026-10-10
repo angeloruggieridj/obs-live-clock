@@ -30,7 +30,7 @@ export const ClientMessage = z.discriminatedUnion('type', [
 ]);
 export type ClientMessage = z.infer<typeof ClientMessage>;
 
-export type ErrorCode = 'invalid_message' | 'protocol_mismatch' | 'hello_required' | 'no_episode';
+export type ErrorCode = 'invalid_message' | 'protocol_mismatch' | 'hello_required' | 'no_episode' | 'internal';
 
 /** Messages the server sends. `view` is the engine projection for the client's role (typed in Plan 4). */
 export type ServerMessage =
