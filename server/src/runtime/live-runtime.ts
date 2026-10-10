@@ -46,6 +46,8 @@ export class LiveRuntime {
   private disposed = false;
   private readonly listeners = new Set<() => void>();
   private persisting: Promise<void> = Promise.resolve();
+  /** True while a snapshot save is queued but has not started; further changes coalesce into it. */
+  private snapshotQueued = false;
   /** Cached `wall - now` offset; keeps wall times integer and stable across projection calls. */
   private wallOffset: number | null = null;
 
@@ -89,7 +91,7 @@ export class LiveRuntime {
     if (this.state?.phase === 'live') throw new LiveRunningError(this.state.episode.id);
     this.state = createLiveState(episode);
     this.journal = this.deps.journalFor(episode.id);
-    this.enqueue(() => this.saveSnapshot());
+    this.requestSnapshot();
     this.reschedule();
     this.notify();
     await this.flush();
@@ -118,7 +120,7 @@ export class LiveRuntime {
     next.decisions = prev.decisions;
     next.nextDecisionId = prev.nextDecisionId;
     this.state = next;
-    this.enqueue(() => this.saveSnapshot());
+    this.requestSnapshot();
     this.reschedule();
     this.notify();
     await this.flush();
@@ -242,8 +244,9 @@ export class LiveRuntime {
   }
 
   /**
-   * Queue the journal append then the snapshot save. The append and the save are independent: a throwing
-   * append is reported but must never stop the snapshot, or a restart would resume a stale state.
+   * Queue the journal append (one per input, in order) and request a snapshot save. The append and the save
+   * are independent: a throwing append is reported but must never stop the snapshot, or a restart would resume
+   * a stale state.
    */
   private persist(input: EngineInput, wallAt: number): void {
     const journal = this.journal;
@@ -253,6 +256,19 @@ export class LiveRuntime {
       } catch (err) {
         this.report(err);
       }
+    });
+    this.requestSnapshot();
+  }
+
+  /**
+   * Queue at most one trailing snapshot save. While a save is already queued and has not started, further
+   * changes coalesce into it: the save reads `this.state` when it runs, so it always writes the latest state.
+   */
+  private requestSnapshot(): void {
+    if (this.snapshotQueued) return;
+    this.snapshotQueued = true;
+    this.enqueue(async () => {
+      this.snapshotQueued = false;
       await this.saveSnapshot();
     });
   }

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { SOLO_FUTSAL_DECK, soloFutsalEpisode } from '@olc/shared/testing';
 import { FakeTime, systemClock, systemScheduler } from '../../src/clock/clock';
 import { LiveJournal } from '../../src/persistence/journal';
@@ -56,6 +56,35 @@ describe('LiveRuntime', () => {
     expect(entries[3]!.input.at).toBe(h.time.now());
     const snap = JSON.parse(await readFile(join(h.dir, 'live', 'snapshot.json'), 'utf8'));
     expect(snap.state.phase).toBe('live');
+  });
+
+  it('coalesces queued snapshot saves but journals every input, and flush writes the latest state', async () => {
+    const dir = await tempDir();
+    const time = new FakeTime();
+    const snapshots = new SnapshotStore(join(dir, 'live', 'snapshot.json'));
+    const save = vi.spyOn(snapshots, 'save');
+    const runtime = new LiveRuntime({
+      clock: time,
+      scheduler: time,
+      snapshots,
+      journalFor: (id) => new LiveJournal(join(dir, 'live', `${id}.log.jsonl`)),
+    });
+
+    await runtime.load(soloFutsalEpisode());
+    let changed = 0;
+    for (let i = 0; i < 50; i++) {
+      const scene = `CAM ${(i % 3) + 1}`;
+      if (runtime.dispatch({ type: 'ProgramSceneChanged', scene, deckOnProgram: false })) changed++;
+    }
+    await runtime.flush();
+
+    expect(changed).toBe(50);
+    expect(save.mock.calls.length).toBeLessThanOrEqual(2);
+    const snap = JSON.parse(await readFile(join(dir, 'live', 'snapshot.json'), 'utf8'));
+    expect(snap.state).toEqual(runtime.getState());
+    const entries = await new LiveJournal(join(dir, 'live', 'ep-2026-10-12.log.jsonl')).readAll();
+    expect(entries).toHaveLength(50);
+    runtime.dispose();
   });
 
   it('returns false and neither journals nor notifies when nothing changed', async () => {

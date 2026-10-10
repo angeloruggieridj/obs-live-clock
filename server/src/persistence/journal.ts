@@ -14,6 +14,10 @@ export interface JournalEntry {
 export class LiveJournal {
   private seq: number | null = null;
   private chain: Promise<void> = Promise.resolve();
+  /** Cleared until the first read seeds `seq`; afterwards appends never re-read the file. */
+  private loaded = false;
+  /** Whether the file currently ends with `\n` (a torn line does not). */
+  private endsWithNewline = true;
 
   constructor(readonly path: string) {}
 
@@ -21,19 +25,32 @@ export class LiveJournal {
     const next = this.chain
       .catch(() => undefined)
       .then(async () => {
-        const raw = await this.readRaw();
-        if (this.seq === null) this.seq = parseEntries(raw).reduce((max, e) => Math.max(max, e.seq), 0);
-        this.seq += 1;
-        const lead = raw.length > 0 && !raw.endsWith('\n') ? '\n' : '';
+        if (!this.loaded) await this.prime();
+        this.seq = (this.seq ?? 0) + 1;
+        const lead = this.endsWithNewline ? '' : '\n';
         await mkdir(dirname(this.path), { recursive: true });
         await appendFile(this.path, `${lead}${JSON.stringify({ seq: this.seq, wallAt, input })}\n`, 'utf8');
+        this.endsWithNewline = true;
       });
     this.chain = next;
     return next;
   }
 
   async readAll(): Promise<JournalEntry[]> {
-    return parseEntries(await this.readRaw());
+    const raw = await this.readRaw();
+    this.primeFrom(raw);
+    return parseEntries(raw);
+  }
+
+  /** One read seeds the seq chain and the trailing-newline state; every later append reuses them. */
+  private async prime(): Promise<void> {
+    this.primeFrom(await this.readRaw());
+  }
+
+  private primeFrom(raw: string): void {
+    this.seq = parseEntries(raw).reduce((max, e) => Math.max(max, e.seq), 0);
+    this.endsWithNewline = raw.length === 0 || raw.endsWith('\n');
+    this.loaded = true;
   }
 
   private async readRaw(): Promise<string> {
