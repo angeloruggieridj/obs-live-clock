@@ -108,14 +108,50 @@ export class DeckAdapter {
     this.source = typeof status.sourceName === 'string' ? status.sourceName : null;
     this.playlist = typeof status.playlistName === 'string' ? status.playlistName : null;
 
-    const items = await this.fetchItems();
+    let items: DeckItem[];
+    try {
+      items = await this.fetchItems();
+    } catch (err) {
+      if (!this.running) return;
+      this.deps.report(err);
+      // A vendor request failure is not fatal: run with an empty list and keep listening/polling.
+      if (!(err instanceof ObsRequestError)) throw err;
+      items = [];
+    }
     if (!this.running) return;
-    this.currentItems = items;
-    this.deps.dispatch({ type: 'DeckPlaylistChanged', items });
+    if (this.deps.dispatch({ type: 'DeckPlaylistChanged', items })) this.currentItems = items;
     this.dispatchStatusPlayback(status);
 
     if (this.capability === 'events') this.attach();
     else this.armPoll();
+  }
+
+  /**
+   * Re-reads the vendor status and items, then re-publishes them.
+   *
+   * Clears the playback dedup state and the item baseline first, so everything is re-dispatched
+   * even if an earlier dispatch was refused. A no-op when not running; never throws.
+   */
+  async resync(): Promise<void> {
+    if (!this.running) return;
+    try {
+      await this.resyncOnce();
+    } catch (err) {
+      this.deps.report(err);
+    }
+  }
+
+  private async resyncOnce(): Promise<void> {
+    if (!this.running) return;
+    const status = await this.getStatus();
+    if (!this.running) return;
+    const items = await this.fetchItems();
+    if (!this.running) return;
+
+    this.lastPlayback = null;
+    this.currentItems = null;
+    if (this.deps.dispatch({ type: 'DeckPlaylistChanged', items })) this.currentItems = items;
+    this.dispatchStatusPlayback(status);
   }
 
   stop(): void {
@@ -166,9 +202,17 @@ export class DeckAdapter {
   private dispatchStatusPlayback(status: ObsData): void {
     const index = status.currentIndex;
     if (!isFiniteNumber(index) || index < 0) return;
-    const positionMs = isFiniteNumber(status.positionMs) ? status.positionMs : -1;
+    const positionMs = status.positionMs;
+    if (!isFiniteNumber(positionMs)) {
+      this.deps.report(new Error('status malformed: positionMs'));
+      return;
+    }
+    const playing = status.playing;
+    if (typeof playing !== 'boolean') {
+      this.deps.report(new Error('status malformed: playing'));
+      return;
+    }
     const durationMs = isFiniteNumber(status.durationMs) ? status.durationMs : -1;
-    const playing = status.playing === true;
     if (this.deps.dispatch({ type: 'DeckPlayback', index, positionMs, durationMs, playing })) {
       this.lastPlayback = { index, positionMs, durationMs, playing, at: this.deps.clock.now() };
     }
@@ -191,14 +235,19 @@ export class DeckAdapter {
   private onVendorEvent(data: ObsData): void {
     if (!this.running) return;
     if (data.vendorName !== VENDOR) return;
-    const eventData = isRecord(data.eventData) ? data.eventData : {};
-    switch (data.eventType) {
+    const eventType = data.eventType;
+    switch (eventType) {
       case 'item-started':
-        this.onItemStarted(eventData);
+      case 'playback-state': {
+        const eventData = data.eventData;
+        if (!isRecord(eventData)) {
+          this.deps.report(new Error(`${String(eventType)} malformed: eventData`));
+          return;
+        }
+        if (eventType === 'item-started') this.onItemStarted(eventData);
+        else this.onPlaybackState(eventData);
         return;
-      case 'playback-state':
-        this.onPlaybackState(eventData);
-        return;
+      }
       case 'playlist-changed':
         this.onPlaylistChanged();
         return;
@@ -211,8 +260,15 @@ export class DeckAdapter {
 
   private onItemStarted(d: ObsData): void {
     const index = d.index;
+    if (!isFiniteNumber(index)) {
+      this.deps.report(new Error('item-started malformed: index'));
+      return;
+    }
     const path = d.path;
-    if (!isFiniteNumber(index) || typeof path !== 'string') return;
+    if (typeof path !== 'string') {
+      this.deps.report(new Error('item-started malformed: path'));
+      return;
+    }
     const title = typeof d.title === 'string' ? d.title : '';
     const durationMs = isFiniteNumber(d.durationMs) ? d.durationMs : -1;
     this.deps.dispatch({ type: 'DeckItemStarted', index, path, title, durationMs });
@@ -220,10 +276,21 @@ export class DeckAdapter {
 
   private onPlaybackState(d: ObsData): void {
     const index = d.index;
-    if (!isFiniteNumber(index)) return;
-    const positionMs = isFiniteNumber(d.positionMs) ? d.positionMs : -1;
+    if (!isFiniteNumber(index)) {
+      this.deps.report(new Error('playback-state malformed: index'));
+      return;
+    }
+    const positionMs = d.positionMs;
+    if (!isFiniteNumber(positionMs)) {
+      this.deps.report(new Error('playback-state malformed: positionMs'));
+      return;
+    }
+    const playing = d.playing;
+    if (typeof playing !== 'boolean') {
+      this.deps.report(new Error('playback-state malformed: playing'));
+      return;
+    }
     const durationMs = isFiniteNumber(d.durationMs) ? d.durationMs : -1;
-    const playing = d.playing === true;
     const now = this.deps.clock.now();
     const last = this.lastPlayback;
     if (last !== null && last.index === index && last.playing === playing && last.durationMs === durationMs) {
@@ -269,8 +336,7 @@ export class DeckAdapter {
     const changed = source !== this.source;
     this.source = source;
     if (typeof status.playlistName === 'string') this.playlist = status.playlistName;
-    this.currentItems = items;
-    this.deps.dispatch({ type: 'DeckPlaylistChanged', items });
+    if (this.deps.dispatch({ type: 'DeckPlaylistChanged', items })) this.currentItems = items;
     if (changed) this.deps.onSourceChanged();
   }
 
@@ -310,8 +376,7 @@ export class DeckAdapter {
     }
     if (typeof status.playlistName === 'string') this.playlist = status.playlistName;
     if (!itemsEqual(this.currentItems, items)) {
-      this.currentItems = items;
-      this.deps.dispatch({ type: 'DeckPlaylistChanged', items });
+      if (this.deps.dispatch({ type: 'DeckPlaylistChanged', items })) this.currentItems = items;
     }
   }
 }

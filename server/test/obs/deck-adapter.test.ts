@@ -18,9 +18,12 @@ function setup(version: string | null) {
     { index: 0, title: 'Servizio 1', path: 'D:/media/servizio1.mp4', durationMs: 185_000 },
     { index: 1, title: 'Servizio 2', path: 'D:/media/servizio2.mp4' },
   ];
+  let accept = true;
+  let getItemsError: Error | null = null;
   obs.respond('CallVendorRequest', (d) => {
     if (version === null) throw new ObsRequestError(600, 'vendor not found');
     if (d?.requestType === 'GetStatus') return { responseData: { ...status, count: items.length } };
+    if (getItemsError !== null) throw getItemsError;
     const r = d?.requestData as { from: number; to: number };
     return { responseData: { ok: true, count: items.length, items: items.slice(r.from, r.to + 1) } };
   });
@@ -29,13 +32,15 @@ function setup(version: string | null) {
   let sourceChanges = 0;
   const deck = new DeckAdapter({
     client: obs, clock: time, scheduler: time,
-    dispatch: (i) => { dispatched.push(i as Record<string, unknown>); return true; },
+    dispatch: (i) => { dispatched.push(i as Record<string, unknown>); return accept; },
     report: (e) => void errors.push(e),
     onSourceChanged: () => void sourceChanges++,
   });
   return {
     time, obs, deck, dispatched, errors, status,
     setItems: (x: typeof items) => (items = x),
+    setAccept: (v: boolean) => { accept = v; },
+    setGetItemsError: (e: Error | null) => { getItemsError = e; },
     sourceChanges: () => sourceChanges,
   };
 }
@@ -110,5 +115,111 @@ describe('DeckAdapter', () => {
     await flush();
     await flush();
     expect(h.dispatched.map((d) => d.type)).toEqual(['DeckPlaylistChanged']);
+  });
+
+  it('reports and ignores playback-state without a boolean playing', async () => {
+    const h = setup('1.4.0');
+    await h.deck.start();
+    h.dispatched.length = 0;
+    h.errors.length = 0;
+    h.obs.emit('VendorEvent', vendor('playback-state', { index: 0, positionMs: 0, durationMs: 1_000 }));
+    expect(h.dispatched).toEqual([]);
+    expect(h.errors).toHaveLength(1);
+  });
+
+  it('reports and ignores playback-state without a numeric positionMs', async () => {
+    const h = setup('1.4.0');
+    await h.deck.start();
+    h.dispatched.length = 0;
+    h.errors.length = 0;
+    h.obs.emit('VendorEvent', vendor('playback-state', { index: 0, playing: true, durationMs: 1_000 }));
+    expect(h.dispatched).toEqual([]);
+    expect(h.errors).toHaveLength(1);
+  });
+
+  it('reports and ignores item-started without a numeric index or string path', async () => {
+    const h = setup('1.4.0');
+    await h.deck.start();
+    h.dispatched.length = 0;
+    h.errors.length = 0;
+    h.obs.emit('VendorEvent', vendor('item-started', { title: 'Servizio 1', durationMs: 185_000 }));
+    expect(h.dispatched).toEqual([]);
+    expect(h.errors).toHaveLength(1);
+  });
+
+  it('reports a non-object eventData instead of dispatching', async () => {
+    const h = setup('1.4.0');
+    await h.deck.start();
+    h.dispatched.length = 0;
+    h.errors.length = 0;
+    h.obs.emit('VendorEvent', { vendorName: 'obs-playlist-deck', eventType: 'item-started', eventData: 'nope' });
+    expect(h.dispatched).toEqual([]);
+    expect(h.errors).toHaveLength(1);
+  });
+
+  it('reports a status playback missing playing instead of dispatching', async () => {
+    const h = setup('1.4.0');
+    h.status.currentIndex = 0;
+    delete (h.status as { playing?: boolean }).playing;
+    await h.deck.start();
+    expect(h.dispatched.some((d) => d.type === 'DeckPlayback')).toBe(false);
+    expect(h.errors).toHaveLength(1);
+  });
+
+  it('survives an ObsRequestError while loading items', async () => {
+    const h = setup('1.4.0');
+    h.setGetItemsError(new ObsRequestError(500, 'GetItems failed'));
+    await expect(h.deck.start()).resolves.toBeUndefined();
+    expect(h.errors).toHaveLength(1);
+    expect(h.deck.info.capability).toBe('events');
+    expect(h.deck.info.sourceName).toBe('Deck Media');
+  });
+
+  it('rethrows a transport error while loading items', async () => {
+    const h = setup('1.4.0');
+    h.setGetItemsError(new Error('socket closed'));
+    await expect(h.deck.start()).rejects.toThrow('socket closed');
+  });
+
+  it('resync() re-delivers items after a refused dispatch', async () => {
+    const h = setup('1.4.0');
+    h.setAccept(false);
+    await h.deck.start();
+    expect(h.deck.items()).toBeNull();
+    h.setAccept(true);
+    await h.deck.resync();
+    expect(h.deck.items()).toEqual([
+      { index: 0, path: 'D:/media/servizio1.mp4', title: 'Servizio 1', durationMs: 185_000 },
+      { index: 1, path: 'D:/media/servizio2.mp4', title: 'Servizio 2', durationMs: -1 },
+    ]);
+    expect(h.dispatched.filter((d) => d.type === 'DeckPlaylistChanged')).toHaveLength(2);
+  });
+
+  it('resync() clears lastPlayback so the same playback is re-dispatched', async () => {
+    const h = setup('1.4.0');
+    await h.deck.start();
+    h.dispatched.length = 0;
+    const state = { index: 0, positionMs: 0, durationMs: 1_000, playing: true };
+    h.obs.emit('VendorEvent', vendor('playback-state', state));
+    expect(h.dispatched).toHaveLength(1);
+    h.obs.emit('VendorEvent', vendor('playback-state', state));
+    expect(h.dispatched).toHaveLength(1);
+    await h.deck.resync();
+    h.dispatched.length = 0;
+    h.obs.emit('VendorEvent', vendor('playback-state', state));
+    expect(h.dispatched.map((d) => d.type)).toEqual(['DeckPlayback']);
+  });
+
+  it('legacy poll re-dispatches after a refused dispatch', async () => {
+    const h = setup('1.3.3');
+    h.setAccept(false);
+    await h.deck.start();
+    h.dispatched.length = 0;
+    h.setAccept(true);
+    h.time.advance(2_000);
+    await flush();
+    await flush();
+    expect(h.dispatched.map((d) => d.type)).toEqual(['DeckPlaylistChanged']);
+    expect(h.deck.items()).not.toBeNull();
   });
 });
