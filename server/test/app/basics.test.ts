@@ -172,7 +172,7 @@ describe('olcInstanceAlive', () => {
     expect(await alive(4242)).toBe(false);
   });
 
-  it('is false when the lock predates the last boot, even with a healthy runtime.json', async () => {
+  it('is false when the lock predates the last boot and the reused pid does not answer', async () => {
     const dir = await tempDir();
     const paths = dataPaths(dir);
     const now = Date.now();
@@ -188,11 +188,27 @@ describe('olcInstanceAlive', () => {
       isPidAlive: () => true,
       fetchImpl: async () => {
         fetched++;
-        return new Response(JSON.stringify({ version: 'x', instanceId: 'i' }), { status: 200 });
+        throw new Error('connection refused');
       },
     });
     expect(await alive(4242)).toBe(false);
-    expect(fetched).toBe(0);
+    expect(fetched).toBe(3);
+  });
+
+  it('is true when a forward clock step makes a healthy old lock look older than the boot', async () => {
+    const dir = await tempDir();
+    const paths = dataPaths(dir);
+    const realNow = Date.now();
+    await writeFile(paths.lock, '4242');
+    await utimes(paths.lock, new Date(realNow - 40_000), new Date(realNow - 40_000));
+    await writeJsonAtomic(paths.runtime, { port: 9, pid: 4242, instanceId: 'i' });
+    const alive = olcInstanceAlive(paths, paths.lock, {
+      now: () => realNow + 120_000,
+      uptimeS: () => 60,
+      isPidAlive: () => true,
+      fetchImpl: async () => new Response(JSON.stringify({ version: 'x', instanceId: 'i' }), { status: 200 }),
+    });
+    expect(await alive(4242)).toBe(true);
   });
 
   it('is false when the owner pid is not alive', async () => {

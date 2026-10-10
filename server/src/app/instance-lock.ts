@@ -39,14 +39,19 @@ const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout
 
 /**
  * A checker that asks the running instance itself whether it still owns the lock. A live PID is not proof
- * (Windows recycles PIDs), so the owner only counts as running when every one of these holds:
- *   1. the PID is alive (`process.kill(pid, 0)`; `EPERM` counts as alive);
- *   2. the lock was written after the last OS boot (a lock from before a reboot is stale even if its PID
- *      has been reused since);
- *   3. the lock is younger than 30 s (its owner is still starting), or `runtime.json` records the owner
- *      PID and that instance answers `/api/health` with `version` and `instanceId`.
+ * (Windows recycles PIDs), so the owner counts as running in this order:
+ *   1. the PID is not alive (`process.kill(pid, 0)`; `EPERM` counts as alive) -> not running;
+ *   2. `runtime.json` exists, records the owner PID and that instance answers `/api/health` with `version`
+ *      and `instanceId` -> running. The boot check deliberately does not apply here: a running, answering
+ *      owner is running even when a forward wall-clock step (time sync, DST on FAT32) moved its lock
+ *      mtime before the computed boot time. The probe is skipped when `runtime.json` is missing or its PID
+ *      does not match, so the step costs no time for an unrelated or absent runtime;
+ *   3. the lock was written after the last OS boot (`mtimeMs > now - uptime*1000 - 5000`) and is younger
+ *      than 30 s -> running, because the owner is still starting;
+ *   4. otherwise -> not running.
  * The health probe retries a few times, each with a short timeout, so a momentarily stalled owner is not
- * declared dead. The time sources and the PID probe are injectable so tests stay deterministic.
+ * declared dead. Compare wall-clock times only to wall-clock times: `now` and the lock mtime are wall
+ * clock, `uptime` is not. The time sources and the PID probe are injectable so tests stay deterministic.
  */
 export function olcInstanceAlive(
   paths: DataPaths,
@@ -61,31 +66,34 @@ export function olcInstanceAlive(
     } catch {
       return false;
     }
-    const current = now();
-    if (mtimeMs <= current - uptimeS() * 1000 - BOOT_SLACK_MS) return false;
-    if (mtimeMs > current - STARTUP_GRACE_MS) return true;
-    let record: { pid?: unknown; port?: unknown };
+    // 2. A matching, answering runtime.json proves the owner is running, regardless of the boot check.
+    let record: { pid?: unknown; port?: unknown } | null = null;
     try {
-      record = JSON.parse(await readFile(paths.runtime, 'utf8')) as { pid?: unknown; port?: unknown };
+      const parsed = JSON.parse(await readFile(paths.runtime, 'utf8')) as { pid?: unknown; port?: unknown };
+      if (parsed !== null && typeof parsed === 'object' && parsed.pid === ownerPid && typeof parsed.port === 'number') {
+        record = parsed;
+      }
     } catch {
-      return false;
+      // A missing or unreadable runtime.json is not proof of anything: fall through to the boot check.
     }
-    if (record === null || typeof record !== 'object' || record.pid !== ownerPid || typeof record.port !== 'number') {
-      return false;
-    }
-    for (let attempt = 0; attempt < HEALTH_ATTEMPTS; attempt++) {
-      if (attempt > 0) await delay(HEALTH_RETRY_MS);
-      try {
-        const res = await fetchImpl(`http://127.0.0.1:${record.port}/api/health`, {
-          signal: AbortSignal.timeout(HEALTH_TIMEOUT_MS),
-        });
-        if (!res.ok) continue;
-        const body = (await res.json()) as Record<string, unknown>;
-        if (body !== null && typeof body === 'object' && 'version' in body && 'instanceId' in body) return true;
-      } catch {
-        // A refused or timed-out attempt is not proof of death; try again until the attempts are exhausted.
+    if (record !== null) {
+      for (let attempt = 0; attempt < HEALTH_ATTEMPTS; attempt++) {
+        if (attempt > 0) await delay(HEALTH_RETRY_MS);
+        try {
+          const res = await fetchImpl(`http://127.0.0.1:${record.port}/api/health`, {
+            signal: AbortSignal.timeout(HEALTH_TIMEOUT_MS),
+          });
+          if (!res.ok) continue;
+          const body = (await res.json()) as Record<string, unknown>;
+          if (body !== null && typeof body === 'object' && 'version' in body && 'instanceId' in body) return true;
+        } catch {
+          // A refused or timed-out attempt is not proof of death; try again until the attempts are exhausted.
+        }
       }
     }
+    // 3. The lock proves its owner is starting only when it was written after boot and is still young.
+    const current = now();
+    if (mtimeMs > current - uptimeS() * 1000 - BOOT_SLACK_MS && mtimeMs > current - STARTUP_GRACE_MS) return true;
     return false;
   };
 }
