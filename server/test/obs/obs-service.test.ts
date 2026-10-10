@@ -30,6 +30,18 @@ const item = (sourceName: string) => ({
   sourceName, sceneItemEnabled: true, sourceType: 'OBS_SOURCE_TYPE_INPUT', isGroup: false,
 });
 
+/** A client whose `connect` waits for a gate, so the connection can be observed mid-connect. */
+class GatedConnectClient extends FakeObsClient {
+  constructor(private readonly gate: Promise<void>) {
+    super();
+  }
+
+  override async connect(url: string, password: string | undefined): Promise<{ obsWebSocketVersion: string; negotiatedRpcVersion: number }> {
+    await this.gate;
+    return super.connect(url, password);
+  }
+}
+
 const vendor = (eventType: string, eventData: Record<string, unknown>) => ({
   vendorName: 'obs-playlist-deck', eventType, eventData,
 });
@@ -38,6 +50,8 @@ interface SetupOpts {
   deckAbsent?: boolean;
   /** When set, the service's runtime refuses `SourceRestored`, so the state can stay lost after a sync. */
   refuseSourceRestored?: 'always' | 'first';
+  /** When set, the first client's `connect` waits for this promise, so the connection can be observed mid-connect. */
+  firstConnectGate?: Promise<void>;
 }
 
 async function setup(opts: SetupOpts = {}) {
@@ -77,7 +91,10 @@ async function setup(opts: SetupOpts = {}) {
 
   const clients: FakeObsClient[] = [];
   const clientFactory = () => {
-    const obs = new FakeObsClient();
+    const obs =
+      opts.firstConnectGate !== undefined && clients.length === 0
+        ? new GatedConnectClient(opts.firstConnectGate)
+        : new FakeObsClient();
     obs.respond('GetSceneList', async () => {
       getSceneListCalls += 1;
       if (failGetSceneListOn !== null && getSceneListCalls === failGetSceneListOn) throw new Error('socket closed');
@@ -442,5 +459,48 @@ describe('ObsService', () => {
     await flush();
 
     expect(JSON.stringify(h.service.status())).not.toContain('hunter2-secret');
+  });
+
+  it('ignores identical credentials while connected so the connection is not dropped', async () => {
+    const h = await setup();
+    await h.runtime.load(soloFutsalEpisode());
+    h.service.setCredentials({ host: '127.0.0.1', port: 4455, password: 'pw' });
+    await flush();
+    await flush();
+    expect(h.service.status().connection).toBe('connected');
+    const first = h.current();
+    const before = h.clients.length;
+
+    h.service.setCredentials({ host: '127.0.0.1', port: 4455, password: 'pw' });
+    await flush();
+    await flush();
+
+    expect(h.service.status().connection).toBe('connected');
+    expect(h.clients.length).toBe(before);
+    expect(h.current()).toBe(first);
+    expect(h.runtime.getState()?.obs).toBe('ok');
+  });
+
+  it('ignores identical credentials while connecting so the attempt is not restarted', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const h = await setup({ firstConnectGate: gate });
+    await h.runtime.load(soloFutsalEpisode());
+    h.service.setCredentials({ host: '127.0.0.1', port: 4455 });
+    await flush();
+    expect(h.service.status().connection).toBe('connecting');
+    expect(h.clients.length).toBe(1);
+
+    h.service.setCredentials({ host: '127.0.0.1', port: 4455 });
+    await flush();
+    expect(h.clients.length).toBe(1);
+
+    release();
+    await flush();
+    await flush();
+    expect(h.service.status().connection).toBe('connected');
+    expect(h.runtime.getState()?.obs).toBe('ok');
   });
 });

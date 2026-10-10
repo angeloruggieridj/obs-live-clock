@@ -16,6 +16,10 @@ export interface ObsStatus {
   deck: DeckStatusInfo | null;
 }
 
+function sameCredentials(a: ObsCredentials, b: ObsCredentials): boolean {
+  return a.host === b.host && a.port === b.port && (a.password ?? '') === (b.password ?? '');
+}
+
 export interface ObsServiceDeps {
   runtime: LiveRuntime;
   clock: Clock;
@@ -74,6 +78,16 @@ export class ObsService {
 
   setCredentials(creds: ObsCredentials | null): void {
     if (this.stopped) return;
+    // The plugin re-posts its credentials on every start: while a connection is already up (or being
+    // established) an identical hand-off must not drop it, or the runtime would briefly go `lost`.
+    if (
+      creds !== null &&
+      this.creds !== null &&
+      sameCredentials(this.creds, creds) &&
+      (this.connection.state === 'connected' || this.connection.state === 'connecting')
+    ) {
+      return;
+    }
     this.creds = creds;
     this.connection.setCredentials(creds);
   }

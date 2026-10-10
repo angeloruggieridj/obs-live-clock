@@ -14,7 +14,12 @@ async function main(): Promise<void> {
     const settings = await loadSettings(paths.settings, (err) =>
       console.warn('[obs-live-clock] invalid settings; using defaults:', err),
     );
-    const { app, instanceId } = await buildServer({ dataDir: paths.root, logger: true, lanAccess: settings.lanAccess });
+    const { app, instanceId } = await buildServer({
+      dataDir: paths.root,
+      logger: true,
+      lanAccess: settings.lanAccess,
+      obsCredentials: settings.obs,
+    });
     await app.listen({ port: settings.port, host: listenHost(settings) });
     await writeJsonAtomic(paths.runtime, { port: settings.port, pid: process.pid, instanceId });
 

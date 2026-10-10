@@ -6,8 +6,13 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import { Episode, Format } from '@olc/shared';
 import { registerHostGuard } from '../api/host-guard';
 import { registerHttp } from '../api/http';
+import { registerInternal } from '../api/internal';
+import { registerObsRoutes } from '../api/obs';
 import { registerWs } from '../api/ws';
 import { systemClock, systemScheduler, type Clock, type Scheduler } from '../clock/clock';
+import { createObsClient, type ObsClient } from '../obs/client';
+import type { ObsCredentials } from '../obs/connection';
+import { ObsService } from '../obs/obs-service';
 import { LiveJournal } from '../persistence/journal';
 import { DocumentRepository, type InvalidDocument } from '../persistence/repository';
 import { SnapshotStore } from '../persistence/snapshot-store';
@@ -29,6 +34,14 @@ export interface ServerOptions {
   networkAddresses?: () => string[];
   /** Source of the machine hostname for the LAN allowlist. Defaults to `os.hostname()`. */
   hostname?: () => string;
+  /** OBS client factory. Defaults to the real `createObsClient`; tests inject a fake. */
+  obsClientFactory?: () => ObsClient;
+  /** DT-5 remote mode: credentials used at startup when no plugin hands them over at runtime. */
+  obsCredentials?: ObsCredentials;
+  /** Platform selector passed to `ensureSecretToken`, injectable so tests can avoid the real `icacls`. */
+  platform?: NodeJS.Platform;
+  /** ACL restriction runner passed to `ensureSecretToken`, injectable so tests never shell out to `icacls`. */
+  restrictAcl?: (path: string) => Promise<void>;
 }
 
 export interface BuiltServer {
@@ -57,9 +70,11 @@ export async function buildServer(opts: ServerOptions): Promise<BuiltServer> {
   const scheduler = opts.scheduler ?? systemScheduler(clock);
   const version = opts.version ?? APP_VERSION;
   const paths = dataPaths(opts.dataDir);
-  await ensureSecretToken(paths.secret);
-
   const app = Fastify({ logger: opts.logger ?? false });
+  const secret = await ensureSecretToken(paths.secret, { restrictAcl: opts.restrictAcl, platform: opts.platform });
+  if (secret.aclWarning !== undefined) {
+    app.log.warn({ warning: secret.aclWarning }, 'Could not restrict the secret token file ACL');
+  }
   const warnInvalid = (kind: string) => (doc: InvalidDocument) =>
     app.log.warn({ file: doc.file, error: doc.error }, `Skipping invalid ${kind} file`);
 
@@ -71,6 +86,16 @@ export async function buildServer(opts: ServerOptions): Promise<BuiltServer> {
     onError: (err) => app.log.error(err),
   });
   await runtime.resume();
+
+  // The reporter logs the message only: an OBS error must never carry the password into the log.
+  const obs = new ObsService({
+    runtime,
+    clock,
+    scheduler,
+    clientFactory: opts.obsClientFactory ?? createObsClient,
+    report: (err) => app.log.error(err instanceof Error ? err.message : String(err)),
+  });
+  if (opts.obsCredentials !== undefined) obs.setCredentials(opts.obsCredentials);
 
   const instanceId = randomUUID();
   // Close live sockets with 1001 "going away" on shutdown (the plugin's default sends no code → clients see 1005).
@@ -87,15 +112,19 @@ export async function buildServer(opts: ServerOptions): Promise<BuiltServer> {
     opts.networkAddresses ??
     (() => Object.values(networkInterfaces()).flatMap((list) => (list ?? []).map((entry) => entry.address)));
   registerHostGuard(app, allowedHostnames(opts.lanAccess ?? false, hostnameFn, networkAddresses));
+  const episodes = new DocumentRepository(paths.episodes, Episode, warnInvalid('episode'));
   registerHttp(app, {
     formats: new DocumentRepository(paths.formats, Format, warnInvalid('format')),
-    episodes: new DocumentRepository(paths.episodes, Episode, warnInvalid('episode')),
+    episodes,
     runtime,
     version,
     instanceId,
   });
+  registerInternal(app, { token: secret.token, obs });
+  registerObsRoutes(app, { obs, episodes });
   registerWs(app, { runtime, clock, version, instanceId, heartbeatMs: opts.heartbeatMs ?? 1_000 });
   app.addHook('onClose', async () => {
+    await obs.stop();
     runtime.dispose();
     await runtime.flush();
   });

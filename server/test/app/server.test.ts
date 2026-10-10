@@ -4,8 +4,8 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { PROTOCOL_VERSION, type ServerMessage } from '@olc/shared';
 import { soloFutsalFormat } from '@olc/shared/testing';
-import { buildServer } from '../../src/app/server';
 import { FakeTime } from '../../src/clock/clock';
+import { buildTestServer } from '../support/server';
 import { tempDir } from '../support/tmp';
 import { connect } from '../support/ws-client';
 
@@ -15,7 +15,7 @@ afterEach(async () => {
 });
 
 async function boot(dataDir: string, time: FakeTime) {
-  const server = await buildServer({ dataDir, clock: time, scheduler: time, heartbeatMs: 40 });
+  const server = await buildTestServer({ dataDir, clock: time, scheduler: time, heartbeatMs: 40 });
   apps.push(server.app);
   return server;
 }

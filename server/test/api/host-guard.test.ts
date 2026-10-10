@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import { afterEach, describe, expect, it } from 'vitest';
 import WebSocket from 'ws';
-import { buildServer } from '../../src/app/server';
 import { FakeTime } from '../../src/clock/clock';
+import { buildTestServer } from '../support/server';
 import { tempDir } from '../support/tmp';
 
 const apps: Array<{ close(): Promise<unknown> }> = [];
@@ -12,7 +12,7 @@ afterEach(async () => {
 
 async function boot() {
   const time = new FakeTime();
-  const server = await buildServer({ dataDir: await tempDir(), clock: time, scheduler: time, heartbeatMs: 40 });
+  const server = await buildTestServer({ dataDir: await tempDir(), clock: time, scheduler: time, heartbeatMs: 40 });
   apps.push(server.app);
   return server;
 }
@@ -59,7 +59,7 @@ describe('host and origin guard', () => {
 
   it('allows an unbracketed IPv6 interface address when LAN access is enabled', async () => {
     const time = new FakeTime();
-    const server = await buildServer({
+    const server = await buildTestServer({
       dataDir: await tempDir(),
       clock: time,
       scheduler: time,
