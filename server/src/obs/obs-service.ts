@@ -30,8 +30,14 @@ export interface ObsServiceDeps {
  * On every connection it builds a fresh `DeckAdapter` and `ObsAdapter` (the previous pair was stopped by
  * `onDisconnected`), starting the deck first so its items and bound source are known before the Program
  * scene is first reported. It watches the runtime so that a fresh episode load — which resets the runtime
- * to `obs: 'lost'` while OBS stays connected — triggers one resync; a resync failure asks the connection to
- * reconnect, so the runtime can never be stuck `obs: 'lost'` while the connection looks healthy.
+ * to `obs: 'lost'` while OBS stays connected — triggers a resync.
+ *
+ * A runtime notify that arrives while a start or a resync is in flight is not lost: it sets a `dirty` flag.
+ * When the operation finishes (for the same connection token) the service re-checks the runtime and runs at
+ * most one follow-up resync, so a load that races a start or a resync cannot leave the runtime stuck `lost`.
+ * A resync that succeeds but still finds the runtime lost is reported once and stops: no self-triggering loop.
+ * A resync that has been superseded by a reconnect is ignored, so it can neither reconnect nor disturb the
+ * healthy connection.
  */
 export class ObsService {
   private readonly connection: ObsConnection;
@@ -43,6 +49,12 @@ export class ObsService {
   private stopped = false;
   private starting = false;
   private resyncing = false;
+  /** The connection token that owns the in-flight resync, or -1 when none. */
+  private resyncToken = -1;
+  /** A runtime notify was skipped because a start/resync was in flight and must be re-checked afterwards. */
+  private dirty = false;
+  /** Depth of our own `runtime.dispatch` calls: notifies raised by them must not mark the runtime dirty. */
+  private dispatchDepth = 0;
   /** Bumped on every connection and disconnect so a superseded in-flight `onConnected` cannot take over. */
   private connectionToken = 0;
 
@@ -130,7 +142,10 @@ export class ObsService {
       this.adapter = adapter;
       await adapter.start();
     } finally {
-      if (token === this.connectionToken) this.starting = false;
+      if (token === this.connectionToken) {
+        this.starting = false;
+        this.settleAfterStart(token);
+      }
     }
   }
 
@@ -142,34 +157,89 @@ export class ObsService {
     this.deck = null;
     this.connectedClient = null;
     this.starting = false;
+    // The flags belong to the dead connection: clear them so a stale resync cannot hold the new connection.
+    this.resyncing = false;
+    this.resyncToken = -1;
+    this.dirty = false;
     adapter?.stop();
     deck?.stop();
     this.dispatch({ type: 'SourceLost' });
   }
 
   private onRuntimeChange(): void {
-    if (this.stopped || this.starting || this.resyncing) return;
-    if (this.connection.state !== 'connected') return;
-    const state = this.deps.runtime.getState();
-    if (state === null || state.obs !== 'lost') return;
+    try {
+      if (this.stopped) return;
+      if (this.connection.state !== 'connected') return;
+      const state = this.deps.runtime.getState();
+      if (state === null || state.obs !== 'lost') return;
+      if (this.starting || this.resyncing) {
+        // A notify raised by our own dispatch is not a fresh reset; only an external one must be re-checked.
+        if (this.dispatchDepth === 0) this.dirty = true;
+        return;
+      }
+      this.beginResync(this.connectionToken);
+    } catch (err) {
+      this.report(err);
+    }
+  }
+
+  /** Starts one resync for `token`; a no-op when already resyncing or the adapters are gone. */
+  private beginResync(token: number): void {
     const adapter = this.adapter;
     const deck = this.deck;
-    if (adapter === null || deck === null) return;
+    if (adapter === null || deck === null || this.resyncing) return;
     this.resyncing = true;
-    void this.resync(adapter, deck);
+    this.resyncToken = token;
+    void this.resync(adapter, deck, token);
   }
 
   /** Single-flight: the flag keeps the dispatches made by the resync from re-entering this path. */
-  private async resync(adapter: ObsAdapter, deck: DeckAdapter): Promise<void> {
+  private async resync(adapter: ObsAdapter, deck: DeckAdapter, token: number): Promise<void> {
     try {
       await adapter.resync();
+      // The connection may have been replaced while the adapter sync was in flight: the stale resync must not
+      // touch the healthy connection.
+      if (this.adapter !== adapter) return;
       await deck.resync();
     } catch (err) {
+      if (this.adapter !== adapter) return;
       this.report(err);
       this.reconnect();
     } finally {
-      this.resyncing = false;
+      if (token === this.connectionToken && this.resyncToken === token) {
+        this.resyncing = false;
+        this.resyncToken = -1;
+        this.settleAfterResync(token);
+      }
     }
+  }
+
+  /** After a start: run one follow-up resync when a notify was skipped or the runtime is still lost. */
+  private settleAfterStart(token: number): void {
+    if (this.stopped || token !== this.connectionToken) return;
+    const dirty = this.dirty;
+    this.dirty = false;
+    if (dirty || this.runtimeLost()) this.beginResync(token);
+  }
+
+  /**
+   * After a resync: a skipped notify means the resync did not see the latest reset, so run exactly one more.
+   * Otherwise, if the runtime is still lost, report once and stop — never resync again on our own.
+   */
+  private settleAfterResync(token: number): void {
+    if (this.stopped || token !== this.connectionToken) return;
+    const dirty = this.dirty;
+    this.dirty = false;
+    if (dirty) {
+      this.beginResync(token);
+      return;
+    }
+    if (this.runtimeLost()) this.report(new Error('OBS resync finished but the runtime is still lost'));
+  }
+
+  private runtimeLost(): boolean {
+    const state = this.deps.runtime.getState();
+    return state !== null && state.obs === 'lost';
   }
 
   /** The cleanest existing way to force a reconnect: re-applying the credentials drops and retries the client. */
@@ -180,7 +250,12 @@ export class ObsService {
 
   private dispatch(input: WithoutAt<EngineInput>): boolean {
     if (this.stopped) return false;
-    return this.deps.runtime.dispatch(input);
+    this.dispatchDepth += 1;
+    try {
+      return this.deps.runtime.dispatch(input);
+    } finally {
+      this.dispatchDepth -= 1;
+    }
   }
 
   private report(err: unknown): void {
