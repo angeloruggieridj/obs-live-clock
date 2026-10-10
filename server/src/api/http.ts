@@ -85,7 +85,10 @@ export function registerHttp(app: FastifyInstance, ctx: HttpContext): void {
     const episode = Episode.parse(req.body);
     if (episode.id !== req.params.id) return reply.code(400).send({ error: 'id_mismatch' });
     if (ctx.runtime.isLive(episode.id)) return reply.code(409).send({ error: 'episode_live' });
-    return ctx.episodes.put(episode);
+    const saved = await ctx.episodes.put(episode);
+    // The loaded episode is not live: reload it so the runtime and its snapshot use the new rundown.
+    if (ctx.runtime.episodeId === episode.id) await ctx.runtime.load(episode);
+    return saved;
   });
   app.delete<IdParams>('/api/episodes/:id', async (req, reply) => {
     if (ctx.runtime.episodeId === req.params.id) return reply.code(409).send({ error: 'episode_loaded' });

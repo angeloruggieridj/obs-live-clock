@@ -82,6 +82,17 @@ describe('episodes', () => {
 });
 
 describe('live control', () => {
+  it('reloads the loaded, not-yet-live episode when it is edited', async () => {
+    const h = await withEpisode();
+    await h.app.inject({ method: 'POST', url: '/api/live/load', payload: { episodeId: 'ep-1' } });
+    const ep = (await h.app.inject({ method: 'GET', url: '/api/episodes/ep-1' })).json();
+    ep.blocks[0].name = 'Primo blocco rinominato';
+    const put = await h.app.inject({ method: 'PUT', url: '/api/episodes/ep-1', payload: ep });
+    expect(put.statusCode).toBe(200);
+    const view = (await h.app.inject({ method: 'GET', url: '/api/live/view?role=control' })).json();
+    expect(view.rows[0].blockName).toBe('Primo blocco rinominato');
+  });
+
   it('loads an episode and serves both views', async () => {
     const h = await withEpisode();
     expect((await h.app.inject({ method: 'GET', url: '/api/live/view?role=presenter' })).json()).toEqual({ error: 'no_episode' });
