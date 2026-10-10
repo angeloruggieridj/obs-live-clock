@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-import { readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { SOLO_FUTSAL_DECK, soloFutsalEpisode } from '@olc/shared/testing';
+import { FakeTime } from '../../src/clock/clock';
 import { LiveJournal } from '../../src/persistence/journal';
+import { SnapshotStore } from '../../src/persistence/snapshot-store';
 import { commandToInput } from '../../src/runtime/commands';
-import { LiveRunningError, NoEpisodeError } from '../../src/runtime/live-runtime';
+import { LiveRunningError, LiveRuntime, NoEpisodeError } from '../../src/runtime/live-runtime';
 import { makeRuntime } from '../support/runtime';
 import { tempDir } from '../support/tmp';
 
@@ -132,5 +134,95 @@ describe('LiveRuntime', () => {
     expect(h.time.pending).toBe(1);
     h.runtime.dispose();
     expect(h.time.pending).toBe(0);
+  });
+
+  it('resume: a broken snapshot does not block start', async () => {
+    const h = makeRuntime(await tempDir());
+    await mkdir(join(h.dir, 'live'), { recursive: true });
+    await writeFile(
+      join(h.dir, 'live', 'snapshot.json'),
+      '{"schemaVersion":1,"episodeId":"ep-x","wallAt":0,"state":{"phase":"live"}}',
+    );
+    const restarted = h.restart();
+    expect(await restarted.resume()).toBe(false);
+    expect(h.errors).toHaveLength(1);
+    expect(restarted.episodeId).toBeNull();
+    expect(restarted.presenterView()).toBeNull();
+    await restarted.load(soloFutsalEpisode());
+    expect(restarted.episodeId).toBe('ep-2026-10-12');
+  });
+
+  it('resume: a valid live snapshot notifies subscribers exactly once', async () => {
+    const h = await liveHarness();
+    const restarted = h.restart();
+    let notified = 0;
+    restarted.subscribe(() => notified++);
+    expect(await restarted.resume()).toBe(true);
+    expect(notified).toBe(1);
+  });
+
+  it('a failing journal append still keeps the snapshot current', async () => {
+    const dir = await tempDir();
+    const time = new FakeTime();
+    const errors: unknown[] = [];
+    const journalPath = join(dir, 'live', 'ep-2026-10-12.log.jsonl');
+    await mkdir(journalPath, { recursive: true });
+    const runtime = new LiveRuntime({
+      clock: time,
+      scheduler: time,
+      snapshots: new SnapshotStore(join(dir, 'live', 'snapshot.json')),
+      journalFor: () => new LiveJournal(journalPath),
+      onError: (err) => errors.push(err),
+    });
+    await runtime.load(soloFutsalEpisode());
+    runtime.dispatch({ type: 'SourceRestored' });
+    runtime.dispatch({ type: 'DeckPlaylistChanged', items: SOLO_FUTSAL_DECK.map((i) => ({ ...i })) });
+    runtime.dispatch({ type: 'ProgramSceneChanged', scene: 'CAM 1', deckOnProgram: false });
+    runtime.dispatch({ type: 'OutputChanged', output: 'rec', state: 'started' });
+    await runtime.flush();
+    const snap = JSON.parse(await readFile(join(dir, 'live', 'snapshot.json'), 'utf8'));
+    expect(snap.state.phase).toBe('live');
+    expect(errors.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('a throwing subscriber does not escape dispatch or a tick', async () => {
+    const h = await liveHarness();
+    let counted = 0;
+    h.runtime.subscribe(() => {
+      throw new Error('subscriber boom');
+    });
+    h.runtime.subscribe(() => counted++);
+
+    expect(h.runtime.dispatch({ type: 'SourceLost' })).toBe(true);
+    expect(counted).toBe(1);
+    expect(h.errors.length).toBeGreaterThanOrEqual(1);
+
+    const before = counted;
+    h.runtime.command({ name: 'send_message', text: 'STRINGI', dismiss: { kind: 'timeout', ms: 10_000 } });
+    expect(h.runtime.presenterView()?.message).toEqual({ text: 'STRINGI' });
+    h.time.advance(10_000);
+    expect(h.runtime.presenterView()?.message).toBeNull();
+    expect(counted).toBeGreaterThan(before);
+  });
+
+  it('dispose marks the runtime disposed', async () => {
+    const h = await liveHarness();
+    h.runtime.dispose();
+    expect(h.runtime.dispatch({ type: 'SourceLost' })).toBe(false);
+    expect(h.time.pending).toBe(0);
+
+    const fresh = makeRuntime(await tempDir());
+    fresh.runtime.dispose();
+    await expect(fresh.runtime.load(soloFutsalEpisode())).rejects.toThrow('Runtime disposed');
+    await expect(fresh.runtime.resume()).rejects.toThrow('Runtime disposed');
+  });
+
+  it('resume returns false and touches nothing when an episode is already loaded', async () => {
+    const h = await liveHarness();
+    const before = h.runtime.getState();
+    expect(await h.runtime.resume()).toBe(false);
+    expect(h.runtime.getState()).toBe(before);
+    expect(h.runtime.episodeId).toBe('ep-2026-10-12');
+    expect(h.errors).toHaveLength(0);
   });
 });
