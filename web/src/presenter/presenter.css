@@ -1,0 +1,154 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/*
+ * Presenter monitor (SPEC §7, AC10): a 16:9 TV read at ~4 m; still fits 4:3. Main tile 2/3, side tiles 1/3,
+ * message row only when present, 9vh status strip. Main digits min(30vh, 21vw): Inter figures are ~0.727 em tall,
+ * so ≥ 21.8 % of the screen height at 16:9 and ≥ 20.4 % at 4:3. Colours come only from the tokens.
+ */
+.p-root {
+  --p-gap: 1vh;
+  --p-strip-h: 9vh;
+  --p-label: 4.5vh;
+  --p-border: 0.6vh;
+  --p-main: min(30vh, 21vw);
+  --p-side: min(10vh, 7vw);
+  --p-imminent: min(60vh, 42vw);
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  cursor: none;
+  display: grid;
+  gap: var(--p-gap);
+  padding: var(--p-gap);
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto var(--p-strip-h);
+  grid-template-areas: 'main side' 'msg msg' 'strip strip';
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font);
+  font-variant-numeric: tabular-nums;
+}
+.p-root .tile {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 1vh;
+  padding: 1.5vh 2vh;
+  border: var(--p-border) solid var(--tile-border);
+  border-radius: 1vh;
+}
+.p-root .label {
+  display: flex;
+  align-items: center;
+  gap: 1.5vh;
+  min-width: 0;
+  font-size: var(--p-label);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+}
+.p-root .caption {
+  font-size: 3.5vh;
+  font-weight: 700;
+  color: var(--fg-dim);
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.p-main { grid-area: main; justify-content: space-between; }
+.p-main-counter { font-size: var(--p-main); text-align: center; align-self: center; }
+.p-main-counter[data-len='6'] { font-size: calc(var(--p-main) * 0.85); }
+.p-main-counter[data-len='7'] { font-size: calc(var(--p-main) * 0.72); }
+.p-main-counter[data-len='8'] { font-size: calc(var(--p-main) * 0.64); }
+.p-root[data-mode='noepisode'] .p-main,
+.p-root[data-mode='ended'] .p-main { grid-column: 1 / -1; }
+.p-side {
+  grid-area: side;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--p-gap);
+  min-width: 0;
+  min-height: 0;
+}
+.p-side-single { grid-template-rows: minmax(0, 1fr); }
+.p-root .p-side .label { font-size: 3.2vh; }
+.p-root .badge { font-size: 2.6vh; margin-left: 0.6vh; }
+.p-next-title {
+  font-size: 5vh;
+  font-weight: 700;
+  line-height: 1.15;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.p-next-dur { display: flex; align-items: center; gap: 1.5vh; font-size: var(--p-side); font-weight: 700; }
+.p-side-counter { font-size: var(--p-side); }
+.p-end-wall { font-size: 4.5vh; font-weight: 700; color: var(--fg-dim); }
+.p-upcoming {
+  margin: 0;
+  padding-left: 1.2em;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6vh;
+  min-width: 0;
+  font-size: 4vh;
+  font-weight: 700;
+}
+.p-onair { display: flex; flex-direction: column; gap: 1vh; min-width: 0; }
+.p-onair-head { display: flex; align-items: baseline; gap: 2vh; min-width: 0; font-size: 4.5vh; font-weight: 700; }
+.p-onair-counter { font-size: 6vh; margin-left: auto; }
+.p-return { font-size: 4.5vh; font-weight: 700; }
+.p-imminent { grid-column: 1 / -1; grid-row: 1; justify-content: center; align-items: center; }
+.p-root .p-imminent .counter { font-size: var(--p-imminent); color: var(--green); }
+.p-root .p-imminent .label,
+.p-root .p-imminent .p-return { color: var(--green); }
+.p-msg {
+  grid-area: msg;
+  background: var(--msg-bg);
+  color: var(--fg);
+  font-size: 6vh;
+  font-weight: 700;
+  line-height: 1.15;
+  padding: 1vh 2vh;
+  border-radius: 1vh;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.p-strip {
+  grid-area: strip;
+  display: flex;
+  align-items: center;
+  gap: min(4vh, 2vw);
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  padding: 0 2vh;
+  font-size: min(4.5vh, 2.4vw);
+  font-weight: 700;
+  border: var(--p-border) solid var(--tile-border);
+  border-radius: 1vh;
+}
+.p-out[data-on='false'] { color: var(--fg-off); }
+.p-out[data-on='true']::before { content: '●'; color: var(--red); margin-right: 0.3em; }
+.p-obs { margin-left: auto; }
+.p-obs[data-ok='false'] { color: var(--amber); }
+/* Tally (SPEC §7, §12): border, label and main digits of the tile. */
+.p-root .tile[data-tally='warn'] { border-color: var(--amber); }
+.p-root .tile[data-tally='warn'] .label,
+.p-root .tile[data-tally='warn'] .p-main-counter { color: var(--amber); }
+.p-root .tile[data-tally='over'] { border-color: var(--red); }
+.p-root .tile[data-tally='over'] .label,
+.p-root .tile[data-tally='over'] .p-main-counter { color: var(--red); }
+.p-root .tile[data-tally='imminent'] { border-color: var(--green); }
+.p-root .overlay-full { font-size: 8vh; }
+.p-root .overlay-stale { top: 2vh; font-size: 6vh; padding: 1vh 4vh; border-width: var(--p-border); }
+/* Stale data freezes and dims the progress bar, exactly like .counter[data-stale='true'] does for counters. */
+.progress-fill[data-stale='true'] { background: var(--stale); }
