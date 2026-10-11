@@ -11,8 +11,12 @@ Ogni passo ha tre parti:
 
 > **Nota sulla sicurezza.** In questo documento non va mai scritta una password reale. Dove serve,
 > usa il segnaposto `<PASSWORD_OBS>` e sostituiscilo solo al momento dell'esecuzione, sulla macchina
-> di regia. Il server tiene la password obs-websocket **solo in memoria**: non viene mai scritta su
-> disco, restituita in una risposta HTTP né stampata nei log.
+> di regia. La password consegnata con `POST /api/internal/obs-credentials` (passo 2) resta **solo in
+> memoria**: non viene mai restituita in una risposta HTTP né stampata nei log. Fa eccezione la
+> modalità **remote** (nessun plugin che consegna le credenziali): lì l'operatore può scrivere la
+> password in `settings.obs.password` dentro `settings.json`, quindi su disco con i permessi del
+> file. In quel caso la nota "solo in memoria" non si applica — vale solo per la consegna via
+> endpoint.
 
 ---
 
@@ -42,6 +46,8 @@ nessun episodio è caricato. I campi da leggere sono:
 - `rundownFinished` — `true` quando la scaletta è finita.
 - `status` — `{rec, stream, recPaused, obs, control}`; in particolare `status.obs` è `ok` / `lost`
   e `status.control` è `auto` / `manual`.
+- `preshow` — quando `phase` è `preshow`, `{plannedStart, totalDurationMs, upcoming[]}`; altrimenti
+  `null`.
 
 I conti alla rovescia stanno **dentro** questi campi: `onAir.anchor`, `block.anchor`,
 `returnTo.anchor` e `programEnd.anchor` hanno forma
@@ -56,15 +62,26 @@ I conti alla rovescia stanno **dentro** questi campi: `onAir.anchor`, `block.anc
 `endsAt - adesso`. Con `kind: "frozen"` il residuo è già pronto in `valueMs`. La `source` è
 `measured` (misurata da OBS), `planned` (dal pianificato) o `estimated` (stima, OBS perso).
 
-Con `role=control` la risposta (`ControlView`) aggiunge la scaletta ordinata:
+Con `role=control` la risposta (`ControlView`) **non è una vista piatta**: la proiezione presentatore
+è annidata dentro un campo `presenter`, e accanto ad essa ci sono i campi di controllo e la scaletta
+ordinata:
 
 ```bash
 curl -sS 'http://127.0.0.1:4460/api/live/view?role=control'
 ```
 
-i campi in più sono `episode` (`{id, name}`), `control`, `obs`, `ambiguous`, `cursor` (indice dello
-slot corrente), `returnSlot`, `offScript`, `decisions[]` e `rows[]` (una riga per slot
-con `slot`, `kind`, `title`, `status`, `provisional`, `durationMs`, `durationSource`).
+- `presenter` — la stessa `PresenterView` descritta sopra (fase, segmento, conti alla rovescia,
+  `status`, `preshow` …). **Non** è appiattita al livello esterno.
+- `episode` — `{id, name}` dell'episodio caricato.
+- `control` — `auto` / `manual`.
+- `obs` — `ok` / `lost`.
+- `ambiguous` — `true` se lo stato è ambiguo.
+- `cursor` — indice dello slot corrente.
+- `returnSlot` — indice dello slot di rientro (o `null`).
+- `offScript` — `{scene, sinceWall}` se OBS è su una scena fuori scaletta (o `null`).
+- `decisions[]` — `{id, kind, atWall, defaultChoice, choice, confirmed}`.
+- `rows[]` — una riga per slot: `slot`, `blockIndex`, `blockName`, `kind`, `title`, `status`,
+  `provisional`, `durationMs`, `durationSource`, `startedAtWall`, `endedAtWall`.
 
 In alternativa si può usare il WebSocket `ws://127.0.0.1:4460/ws`: manda
 `{"type":"hello","role":"presenter","protocol":1}` e ricevi messaggi
@@ -74,7 +91,7 @@ e chiude.
 
 ---
 
-## 1. Prerequisiti
+## 1. Prerequisiti (lato OBS)
 
 **Setup**
 
@@ -91,65 +108,13 @@ e chiude.
   `pnpm --filter @olc/obs-sim start` (vedi la tabella finale): non usa password, quindi **non**
   riproduce `auth_failed`, ma copre scenari, deck, REC/stream e il distacco (`drop`).
 
-**Preparare l'episodio**
-
-Serve un episodio i cui scene group e blocchi corrispondano all'allestimento OBS:
-
-- uno **scene group** con le scene `CAM 1`, `CAM 2`, `CAM 3`, usato da un blocco `studio`;
-- un blocco **`break`** con `scene: "BREAK"` e `mediaInput: "Tappo"` (serve al passo 8);
-- almeno un **elemento media** in un blocco `studio`, con `path` uguale a una voce del deck (serve al
-  segmento media del passo 6 e agli avvisi `deck_legacy` / `deck_item_missing` dei passi 3 e 12).
-
-Per scegliere o creare l'episodio:
-
-1. Elenca gli episodi esistenti e prendi l'`id`:
-
-   ```bash
-   curl -sS http://127.0.0.1:4460/api/episodes
-   ```
-
-   Se uno ha già le scene giuste, usa il suo `id` come `<ID_EPISODIO>`.
-
-2. Altrimenti creane uno da un format che abbia le scene giuste (`GET /api/formats` per l'`id`):
-
-   ```bash
-   curl -sS -X POST http://127.0.0.1:4460/api/formats/<ID_FORMATO>/episodes \
-     -H 'Content-Type: application/json' \
-     -d '{"id":"<ID_EPISODIO>","date":"2026-10-11","plannedStart":null,"playlistName":"<NOME_PLAYLIST>"}'
-   ```
-
-   L'episodio è una copia del format, quindi eredita scene group e blocchi. Per completare o
-   correggere le scene e l'elemento media manda l'episodio intero con
-   `PUT /api/episodes/<ID_EPISODIO>`.
-
-3. Carica l'episodio nel runtime e avvia il programma:
-
-   ```bash
-   curl -sS -X POST http://127.0.0.1:4460/api/live/load \
-     -H 'Content-Type: application/json' -d '{"episodeId":"<ID_EPISODIO>"}'
-
-   curl -sS -X POST http://127.0.0.1:4460/api/live/command \
-     -H 'Content-Type: application/json' -d '{"name":"start_program"}'
-   ```
-
-   L'`id` del comando è quello del protocollo (`ClientCommand`), non quello HTTP: `start_program`,
-   `end_program`, `next`, `prev`, `goto` (`{name, slot}`), `adjust` (`{name, deltaMs}`),
-   `set_control` (`{name, control}`), `send_message`, `clear_message`, `resolve_decision`.
-   Il `load` risponde `{"episodeId": ...}`, il `command` risponde `{"changed": <bool>}`.
-
-4. Controlla le voci del deck e allinea la `path` dell'elemento media (richiede OBS connesso,
-   passo 2):
-
-   ```bash
-   curl -sS http://127.0.0.1:4460/api/deck/items
-   ```
+> **Ordine da seguire.** 1) Prepara OBS e il plugin (questa sezione). 2) Avvia il server e consegna
+> le credenziali (sezione 2): senza OBS connesso `GET /api/deck/items` (409 `obs_not_connected`) e
+> `POST /api/obs/check` non funzionano. 3) Prepara l'episodio e allinea il deck (sezione
+> «Prerequisiti dell'episodio», subito dopo la 2). Solo allora esegui i passi da 3 a 14.
 
 **Risultato atteso**
 
-- `GET /api/episodes` restituisce un episodio `<ID_EPISODIO>` le cui scene (`CAM 1/2/3`, `BREAK`) e
-  il cui `mediaInput` `Tappo` coincidono con l'OBS configurato.
-- `POST /api/live/load` risponde `{"episodeId":"<ID_EPISODIO>"}` e
-  `GET /api/live/view?role=presenter` non è più `404`.
 - OBS offre il server WebSocket sulla porta annotata e Playlist Deck risulta attivo.
 
 ---
@@ -175,7 +140,7 @@ Per scegliere o creare l'episodio:
    (finché il Plan 6 non le consegnerà automaticamente):
 
    ```bash
-   TOKEN=$(cat "$APPDATA/obs-live-clock/secret.token")
+   TOKEN=$(cat "${OLC_DATA_DIR:-$APPDATA/obs-live-clock}/secret.token")
    curl -sS -o /dev/null -w '%{http_code}\n' \
      -X POST http://127.0.0.1:4460/api/internal/obs-credentials \
      -H "Authorization: Bearer $TOKEN" \
@@ -185,6 +150,8 @@ Per scegliere o creare l'episodio:
 
    L'endpoint accetta solo richieste da **loopback**, richiede il token come `Bearer` e risponde
    `204 No Content` in caso di successo. Corpo: `host` (predefinito `127.0.0.1`), `port`, `password`.
+   Se il plugin (Plan 6) non è installato, l'operatore può anche mettere `host`/`port`/`password` in
+   `settings.obs` di `settings.json` (modalità remote).
 
 **Risultato atteso**
 
@@ -194,11 +161,128 @@ Per scegliere o creare l'episodio:
 
 ---
 
+## Prerequisiti dell'episodio (con server e OBS connessi)
+
+Si eseguono **dopo** la sezione 2. Serve un episodio i cui scene group e blocchi corrispondano
+all'allestimento OBS:
+
+- uno **scene group** con le scene `CAM 1`, `CAM 2`, `CAM 3`, usato da un blocco `studio`;
+- un blocco **`break`** con `scene: "BREAK"` e `mediaInput: "Tappo"` (serve al passo 8);
+- almeno un **elemento media** in un blocco `studio`, con `path` uguale a una voce del deck (serve al
+  segmento media del passo 6 e agli avvisi `deck_legacy` / `deck_item_missing` dei passi 3 e 12).
+
+**Crea un format di prova** (valido per `shared/src/model/format.ts`) e registralo con
+`POST /api/formats`:
+
+```bash
+curl -sS -X POST http://127.0.0.1:4460/api/formats \
+  -H 'Content-Type: application/json' \
+  --data-binary @- <<'JSON'
+{
+  "schemaVersion": 1,
+  "id": "<ID_FORMATO>",
+  "name": "Format di prova",
+  "preset": {
+    "mode": "streaming",
+    "warnMs": 60000,
+    "returnImminentMs": 10000,
+    "adjustStepMs": 30000,
+    "recPauseFreezesProgram": false
+  },
+  "sceneGroups": [
+    { "id": "sg-cam", "name": "Camere", "scenes": ["CAM 1", "CAM 2", "CAM 3"] }
+  ],
+  "messages": [
+    { "id": "msg-break", "text": "Pubblicità", "dismiss": { "kind": "manual" } }
+  ],
+  "blocks": [
+    {
+      "id": "blk-studio",
+      "kind": "studio",
+      "name": "Studio",
+      "durationMs": 600000,
+      "elastic": true,
+      "sceneGroupId": "sg-cam",
+      "elements": [
+        { "id": "el-studio", "kind": "studio" },
+        {
+          "id": "el-servizio",
+          "kind": "media",
+          "title": "Servizio",
+          "path": "<PERCORSO_ITEM_DECK>",
+          "occurrence": 0,
+          "plannedDurationMs": 120000
+        }
+      ]
+    },
+    {
+      "id": "blk-break",
+      "kind": "break",
+      "name": "Break",
+      "durationMs": 120000,
+      "scene": "BREAK",
+      "mediaInput": "Tappo"
+    }
+  ]
+}
+JSON
+```
+
+Sostituisci `<ID_FORMATO>` e `<PERCORSO_ITEM_DECK>` (la `path` deve combaciare con una voce del
+deck). La risposta è `201` con il format salvato; se `<ID_FORMATO>` esiste già è `409
+{"error":"exists"}`.
+
+**Crea l'episodio** come copia del format (`201`):
+
+```bash
+curl -sS -X POST http://127.0.0.1:4460/api/formats/<ID_FORMATO>/episodes \
+  -H 'Content-Type: application/json' \
+  -d '{"id":"<ID_EPISODIO>","date":"2026-10-11","plannedStart":null,"playlistName":null}'
+```
+
+**Carica l'episodio** nel runtime (senza avviare il programma):
+
+```bash
+curl -sS -X POST http://127.0.0.1:4460/api/live/load \
+  -H 'Content-Type: application/json' -d '{"episodeId":"<ID_EPISODIO>"}'
+```
+
+**Allinea il deck** (richiede OBS connesso, sezione 2):
+
+```bash
+curl -sS http://127.0.0.1:4460/api/deck/items
+```
+
+**Risultato atteso**
+
+- Il format è salvato (`201`) e l'episodio è creato (`201`), copia del format (stessi scene group e
+  blocchi).
+- `POST /api/live/load` risponde `{"episodeId":"<ID_EPISODIO>"}` e
+  `GET /api/live/view?role=presenter` mostra `"phase":"preshow"` con `preshow` non `null`: il
+  programma **non** è ancora partito.
+- `GET /api/deck/items` risponde `200` con `{items:[...occurrence]}`; se OBS non è connesso risponde
+  `409 {"error":"obs_not_connected"}`.
+- `PUT /api/episodes/<ID_EPISODIO>` mentre la puntata è **live** risponde `409
+  {"error":"episode_live"}`: la modifica non tocca la puntata in onda.
+- `POST /api/live/load` mentre **un altro** episodio è già live risponde `409
+  {"error":"live_running"}`.
+
+> **Avviare il programma senza REC.** Dopo il `load` la fase è `preshow`. Il comando
+> `POST /api/live/command -d '{"name":"start_program"}'` fa partire la scaletta e porta la fase a
+> `live` **senza registrare**. Usalo solo per i passi che richiedono un programma in corso senza REC:
+> se lo invii qui, il passo 4 ("REC start → live") non è più osservabile, perché la fase è già
+> `live` (il motore accetta `start_program` solo da `preshow`). Nel percorso principale **non**
+> inviarlo: la fase diventa `live` al passo 4, quando OBS inizia a registrare; i passi da 5 a 11
+> valgono da lì in avanti.
+
+---
+
 ## 3. Check OBS senza problemi
 
 **Setup**
 
-- Server connesso a OBS; episodio caricato nell'editor.
+- Server connesso a OBS; episodio caricato (`POST /api/live/load`, vedi «Prerequisiti
+  dell'episodio»).
 
 **Azione**
 
@@ -223,7 +307,8 @@ Per scegliere o creare l'episodio:
 
 **Setup**
 
-- Server connesso, episodio `<ID_EPISODIO>` caricato (`POST /api/live/load`), OBS in onda su `CAM 1`.
+- Server connesso, episodio `<ID_EPISODIO>` caricato (`POST /api/live/load`), OBS in onda su `CAM 1`,
+  fase ancora `preshow` (non hai inviato `start_program`).
 
 **Azione**
 
@@ -238,6 +323,7 @@ Per scegliere o creare l'episodio:
 
 - La proiezione passa alla fase **live**: `"phase":"live"`.
 - `status.rec` diventa `true`.
+- I passi da **5 a 11** richiedono questa fase `live`, raggiunta qui avviando REC.
 
 ---
 
@@ -259,7 +345,8 @@ Per scegliere o creare l'episodio:
 - L'`anchor` del blocco resta lo stesso conto alla rovescia: con `block.anchor.kind === "countdown"`
   `endsAt` non cambia; con `kind === "frozen"` `valueMs` non cambia. La `source` resta la stessa
   (`measured` o `estimated`).
-- Anche in `role=control` il `cursor` non cambia e `returnSlot` resta `null`.
+- Anche in `role=control` il `cursor` non cambia e `returnSlot` resta `null`. Nella `ControlView` i
+  conti alla rovescia stanno dentro `presenter`, non al livello esterno.
 - Solo i media del deck fanno scattare il segmento media (passo 6).
 
 ---
@@ -331,11 +418,14 @@ Per scegliere o creare l'episodio:
 1. Chiudi OBS.
 2. Riattiva OBS.
 
-Per misurare la latenza, interroga la vista in un ciclo breve e guarda `status.obs` e le `source`:
+Per misurare la latenza, interroga la vista in un ciclo breve, stampando il timestamp di ogni
+lettura, e guarda `status.obs` e le `source`:
 
 ```bash
 for i in $(seq 1 20); do
-  curl -sS 'http://127.0.0.1:4460/api/live/view?role=presenter'; echo; sleep 0.5
+  printf '%s ' "$(date +%s.%N)"
+  curl -sS 'http://127.0.0.1:4460/api/live/view?role=presenter'; echo
+  sleep 0.5
 done
 ```
 
@@ -344,7 +434,8 @@ done
 - Entro una **tolleranza di ~2 s** `status.obs` passa a `"lost"` e i valori passano a **STIMATO**
   (`source: "estimated"`), continuando a contare sui tempi pianificati. Il distacco arriva
   dall'evento `ConnectionClosed` di obs-websocket, quindi in pratica è quasi immediato: 2 s è il
-  margine ammesso.
+  margine ammesso (i timestamp stampati dal ciclo permettono di misurare quando avviene il
+  passaggio).
 - Il server tenta la riconnessione da solo con un **backoff da 0,5 s fino a 5 s** (raddoppia a ogni
   tentativo fino al tetto di 5 s).
 - Alla riaccensione, dopo la riconnessione automatica, i valori tornano **misurati** (`source`
@@ -360,16 +451,28 @@ done
 
 **Azione**
 
-- Invia credenziali con `password` sbagliata (stesso comando del passo 2, con una password errata).
-- In OBS apri **Strumenti → Registro dei file di log → Visualizza registro corrente**.
+1. Invia credenziali con `password` sbagliata (stesso comando del passo 2, con una password errata).
+2. Interroga lo stato più volte per qualche secondo:
+
+   ```bash
+   for i in $(seq 1 10); do
+     curl -sS http://127.0.0.1:4460/api/obs/status; echo; sleep 1
+   done
+   ```
+
+3. In OBS apri **Aiuto → File di log → Visualizza registro corrente**.
 
 **Risultato atteso**
 
-- In `GET /api/obs/status` il campo `connection` diventa `"auth_failed"`.
-- Il server **non** riprova: un errore di autenticazione ferma i tentativi (nessun retry schedulato),
-  quindi nel log di OBS compare **una sola** voce di autenticazione fallita, non tentativi ripetuti.
+- In `GET /api/obs/status` il campo `connection` diventa `"auth_failed"` e **resta** lì:
+  interrogando lo stato come al punto 2 non lo si vede mai tornare a `"connecting"`.
+- Il server **non** riprova: un errore di autenticazione ferma i tentativi (in
+  `server/src/obs/connection.ts` il ramo `auth_failed` ritorna senza schedulare una riconnessione),
+  quindi nel log di OBS compare **una sola** voce di autenticazione fallita e, nel tempo, **nessuna
+  nuova connessione** (nessun tentativo ripetuto). Lo stesso silenzio si osserva dal lato
+  simulatore/OBS: nessun nuovo handshake in arrivo.
 - **Come ripristinare:** invia di nuovo le credenziali giuste (stesso comando del passo 2, con
-  `<PASSWORD_OBS>` corretto). Il nuovo invio riparte da zero e `connection` passa a `"connected"`.
+  `<PASSWORD_OBS>` corretto). Un nuovo `POST` riparte da zero e `connection` passa a `"connected"`.
 
 ---
 
@@ -413,6 +516,9 @@ done
 - Poiché gli eventi `VendorEvent` non sono agganciati, in modalità legacy **non** arrivano eventi
   `item-started`, `playback-state` o `playlist-changed`: gli aggiornamenti della lista arrivano solo
   dal polling del punto precedente.
+- Di conseguenza, con un plugin legacy **nessun** evento di riproduzione (`item-started`,
+  `playback-state`) raggiunge il motore: il countdown **misurato** del passo 6 non si applica. Qui la
+  durata resta quella pianificata o ricavata dal polling, non la misura live di OBS.
 
 ---
 
@@ -466,13 +572,16 @@ done
 | Elementi del deck | `GET /api/deck/items` | `{items:[...occurrence]}`; `409 obs_not_connected`, `404 deck_absent`, `409 deck_not_ready` (plugin presente ma prima lettura non ancora completata). |
 | Check OBS | `POST /api/obs/check` | Corpo `{episodeId}`; `400 invalid_body`, `404 not_found`; risposta con `connected`, `deck` e `issues[]`. |
 | Codici issue | — | `obs_not_connected`, `scene_missing`, `media_input_missing`, `deck_absent`, `deck_legacy`, `deck_item_missing`, `deck_duration_unknown`. |
+| Creazione format | `POST /api/formats` | Corpo `Format` (schemaVersion 1); `201` creato, `409 {"error":"exists"}` se l'id esiste già. |
+| Creazione episodio | `POST /api/formats/:id/episodes` | Corpo `{id, date, plannedStart, playlistName}`; `201` creato, `404 not_found`, `409 {"error":"exists"}`. |
+| Modifica episodio | `PUT /api/episodes/:id` | `400 id_mismatch`; `409 {"error":"episode_live"}` se l'episodio è in onda. |
 | Elenco episodi | `GET /api/episodes` | Restituisce gli episodi salvati; prendi l'`id` (`<ID_EPISODIO>`). |
-| Carica episodio | `POST /api/live/load` | Corpo `{episodeId}`; risponde `{episodeId}`; `404 not_found`, `409 live_running`. |
-| Comandi live | `POST /api/live/command` | Corpo `ClientCommand`, es. `{"name":"start_program"}`; risponde `{changed}`. |
+| Carica episodio | `POST /api/live/load` | Corpo `{episodeId}`; risponde `{episodeId}`; `404 not_found`, `409 {"error":"live_running"}` se un altro episodio è live; dopo il load la fase è `preshow`. |
+| Comandi live | `POST /api/live/command` | Corpo `ClientCommand`, es. `{"name":"start_program"}`; risponde `{changed}`. `start_program` è accettato solo da `preshow`. |
 | Vista presentatore | `GET /api/live/view?role=presenter` | `PresenterView`; `400 invalid_role`, `404 no_episode`. La pagina `/presenter` arriverà con un piano successivo. |
-| Vista control | `GET /api/live/view?role=control` | `ControlView`; include `cursor`, `rows[]`, `decisions[]`. |
+| Vista control | `GET /api/live/view?role=control` | `ControlView`: `presenter` (annidata), `episode`, `control`, `obs`, `ambiguous`, `cursor`, `returnSlot`, `offScript`, `decisions[]`, `rows[]`. |
 | WebSocket | `ws://127.0.0.1:4460/ws` | `hello` (`{type, role, protocol:1}`) → `view` / `heartbeat` / `ack`; `protocol` diverso → `protocol_mismatch`. |
-| Cartella dati | `OLC_DATA_DIR` (env) | Sostituisce il percorso predefinito; host/porta HTTP da `settings.json` (`port`, default `4460`). |
+| Cartella dati | `OLC_DATA_DIR` (env) | Sostituisce il percorso predefinito; host/porta HTTP da `settings.json` (`port`, default `4460`). Token in `${OLC_DATA_DIR:-$APPDATA/obs-live-clock}/secret.token`. |
 | Simulatore OBS | `pnpm --filter @olc/obs-sim start -- --host <host> --port <porta>` | `--host` default `127.0.0.1`, `--port` default `4455`; comandi da stdin: `program`, `rec`, `stream`, `play`, `media`, `drop`. Non usa password, quindi **non** riproduce `auth_failed`; utile per pre-testare il piano senza OBS reale. |
 | Playlist Deck legacy (< 1.4.0) | — | Solo polling degli elementi (~2 s); nessun evento `VendorEvent` agganciato (niente `item-started`/`playback-state`/`playlist-changed`). |
 | Backoff riconnessione | `server/src/obs/connection.ts` | Da 0,5 s raddoppiando fino a un tetto di 5 s; l'errore di autenticazione non riprova. |
