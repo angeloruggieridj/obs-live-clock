@@ -1,0 +1,31 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+.control { min-height: 100%; display: flex; flex-direction: column; gap: 12px; padding: 12px; font-size: 15px; }
+.c-header h1 { margin: 0; font-size: 1.3rem; }
+.c-main { display: grid; grid-template-columns: minmax(0, 2fr) minmax(300px, 1fr); gap: 12px; align-items: start; }
+@media (max-width: 900px) {
+  .c-main { grid-template-columns: minmax(0, 1fr); }
+}
+.c-rundown { min-width: 0; overflow-x: auto; }
+.c-side { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.rundown { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.rundown th { text-align: left; color: var(--fg-dim); font-size: 0.8rem; padding: 4px 6px; border-bottom: 1px solid var(--tile-border); }
+.rundown td { padding: 4px 6px; border-bottom: 1px solid var(--tile-border); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rundown th:nth-child(1) { width: 3em; }
+.rundown th:nth-child(2) { width: 16%; }
+.rundown th:nth-child(3) { width: 26%; }
+.rundown th:nth-child(4) { width: 13%; }
+.rundown th:nth-child(5), .rundown th:nth-child(6), .rundown th:nth-child(7) { width: 9%; }
+.rundown th:nth-child(8) { width: 10%; }
+.rundown th:nth-child(9) { width: 5em; }
+.rundown tr[aria-current='true'] td { background: var(--surface); font-weight: 700; }
+.rundown tr[aria-current='true'] td.c-slot { box-shadow: inset 4px 0 0 var(--red); }
+.rundown tr[data-status='done'] td, .rundown tr[data-status='dropped'] td { color: var(--fg-dim); }
+.rundown tr[data-status='dropped'] td.c-item { text-decoration: line-through; }
+.rundown tr[data-provisional='true'] td.c-status { color: var(--estimated); }
+.feed-list { margin: 0; padding: 0; list-style: none; max-height: 40vh; overflow-y: auto; font-size: 0.9rem; }
+.feed-time { color: var(--fg-dim); }
+.episode-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; }
+.episode-list li { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.episode-list .label-text { flex: 1 1 auto; }
+.episode-date { color: var(--fg-dim); }
+.empty { color: var(--fg-dim); }
