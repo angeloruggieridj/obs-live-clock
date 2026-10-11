@@ -1,0 +1,39 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font);
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+}
+#root { height: 100%; }
+a { color: var(--fg); }
+button {
+  font: inherit; color: var(--fg); background: var(--surface);
+  border: 1px solid var(--tile-border); border-radius: 6px; padding: 6px 10px; min-height: 36px; cursor: pointer;
+}
+button:disabled { opacity: 0.45; cursor: not-allowed; }
+button:focus-visible, a:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+.badge {
+  display: inline-block; font-size: 0.6em; font-weight: 700; letter-spacing: 0.06em; padding: 0.1em 0.4em;
+  border: 0.12em solid currentColor; border-radius: 0.3em; vertical-align: middle; white-space: nowrap; margin-left: 0.4em;
+}
+.badge-estimated { color: var(--estimated); }
+.badge-planned, .badge-paused { color: var(--fg-dim); }
+.label-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.counter { font-weight: 700; line-height: 1; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.counter[data-source='estimated'] { color: var(--estimated); }
+.counter[data-stale='true'] { color: var(--stale) !important; }
+.overlay-full {
+  position: fixed; inset: 0; z-index: 10; display: flex; align-items: center; justify-content: center;
+  background: var(--bg); color: var(--fg-dim); font-weight: 700; font-size: 2rem; letter-spacing: 0.08em;
+}
+.overlay-stale {
+  position: fixed; top: 8px; left: 50%; transform: translateX(-50%); z-index: 10;
+  background: var(--bg); color: var(--amber); border: 2px solid var(--amber); border-radius: 6px;
+  padding: 4px 16px; font-weight: 700;
+}
+.progress { height: 0.8vh; min-height: 4px; background: var(--tile-border); border-radius: 999px; overflow: hidden; }
+.progress-fill { height: 100%; background: var(--fg-dim); transform-origin: left center; }
