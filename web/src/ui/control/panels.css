@@ -1,0 +1,44 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+.panel {
+  background: var(--surface);
+  border: 2px solid var(--tile-border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.panel-title { margin: 0; font-size: 0.85rem; font-weight: 700; letter-spacing: 0.06em; color: var(--fg-dim); cursor: pointer; }
+.status-badges { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-weight: 700; font-size: 0.85rem; }
+.badge-phase, .badge-segment, .badge-manual {
+  border: 1px solid currentColor; border-radius: 4px; padding: 1px 6px;
+}
+.badge-manual { color: var(--amber); }
+.status-obs { margin-left: auto; }
+.status-obs[data-ok='false'] { color: var(--amber); }
+.status-current { display: flex; align-items: baseline; gap: 8px; min-width: 0; font-weight: 700; }
+.status-title { flex: 1 1 auto; }
+.status-counter { font-size: 2rem; }
+.status-return, .status-row { color: var(--fg-dim); font-weight: 700; }
+.status-row { display: flex; flex-wrap: wrap; gap: 4px 12px; }
+.status[data-tally='warn'] { border-color: var(--amber); }
+.status[data-tally='warn'] .status-counter { color: var(--amber); }
+.status[data-tally='over'] { border-color: var(--red); }
+.status[data-tally='over'] .status-counter { color: var(--red); }
+.alert { color: var(--amber); font-weight: 700; overflow-wrap: anywhere; }
+.decision { display: flex; flex-direction: column; gap: 4px; }
+.decision-choices { display: flex; flex-wrap: wrap; gap: 6px; }
+button[aria-pressed='true'] { border-color: var(--fg); font-weight: 700; }
+.current-message { font-weight: 700; }
+.preset-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 6px; }
+.preset-grid button { text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.free-text { display: flex; gap: 6px; }
+.free-text input {
+  flex: 1 1 auto; min-width: 0; font: inherit; color: var(--fg); background: var(--bg);
+  border: 1px solid var(--tile-border); border-radius: 6px; padding: 6px 8px;
+}
+.emergency-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 6px; padding-top: 6px; }
+.confirm-button[data-armed='true'] { border-color: var(--amber); color: var(--amber); }
+.confirm-button[data-danger='true'] { border-color: var(--red); }
+.cmd-feedback { min-height: 1.4em; color: var(--amber); font-weight: 700; }

@@ -1,0 +1,14 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* OBS Custom Browser Dock (CEF): vertical, usable from 300 px; no features newer than Chromium 103. */
+.dock {
+  min-width: 300px;
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  background: var(--bg);
+  font-size: 14px;
+}
+.no-episode { color: var(--fg-dim); font-weight: 700; }
+.open-extended { align-self: flex-start; font-weight: 700; }
