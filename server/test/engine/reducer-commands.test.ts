@@ -184,20 +184,27 @@ describe('time-based hand-over between adjacent studio blocks (OBS connected)', 
 });
 
 describe('estimated hand-over during an out-of-order excursion', () => {
-  it('starts from the resume position, closes the interrupted returnSlot and is not ambiguous', () => {
-    // Servizio 1 airs out of order, interrupting the block-2 studio slot it was owed before.
-    let s = run(
+  // Servizio 1 airs out of order, interrupting the block-2 studio slot it was owed before (cursor 1,
+  // returnSlot 4), then OBS is lost.
+  const excursion = () =>
+    run(
       liveState(),
       { type: 'ProgramSceneChanged', at: T0 + 700_000, scene: 'BREAK', deckOnProgram: false },
       { type: 'ProgramSceneChanged', at: T0 + 880_000, scene: 'CAM 1', deckOnProgram: false },
       { type: 'DeckItemStarted', at: T0 + 900_000, index: 0, path: 'D:/media/servizio1.mp4', title: 'Servizio 1', durationMs: 185_000 },
       { type: 'ProgramSceneChanged', at: T0 + 900_000, scene: 'PLAYOUT', deckOnProgram: true },
     );
+
+  it('starts from the resume position, closes the interrupted returnSlot and stays ambiguous until the gap is resolved', () => {
+    let s = run(excursion(), { type: 'SourceLost', at: T0 + 950_000 });
     expect(s.cursor).toBe(1);
     expect(s.returnSlot).toBe(4);
 
-    s = run(s, { type: 'SourceLost', at: T0 + 950_000 }, { type: 'Tick', at: T0 + 1_520_000 });
-
+    s = run(s, { type: 'Tick', at: T0 + 1_520_000 });
+    expect(s.cursor).toBe(7);
+    // The hand-over clears the excursion: no stale returnSlot survives (otherwise `position(s)` never
+    // advances past the resume slot and the restore below never resyncs).
+    expect(s.returnSlot).toBeNull();
     // Slots between the excursion slot and the resume position were observed: they must not be provisional.
     expect(s.slotRt[3]!.provisional).toBe(false);
     expect(s.slotRt[4]!.provisional).toBe(false);
@@ -210,6 +217,99 @@ describe('estimated hand-over during an out-of-order excursion', () => {
       { type: 'SourceRestored', at: T0 + 1_520_000 },
       { type: 'ProgramSceneChanged', at: T0 + 1_520_000, scene: 'CAM 1', deckOnProgram: false },
     );
+    // CAM 1 confirms the provisional block-2 studio position, but the estimating loop guessed its way
+    // through the break and block-2 media slot 5 (Servizio 2) that OBS never observed. Per R1' the position
+    // is therefore ambiguous: the clock keeps degrading like OBS is still lost until a later real
+    // media/break observation (or a correction) resolves the gap. The original "not ambiguous" assertion
+    // was a plan defect — nothing ever observed slot 5.
+    expect(s.ambiguous).toBe(true);
+  });
+
+  it('on a mismatched restore rolls the guessed position back cleanly, un-starting the time-started block', () => {
+    let s = run(excursion(), { type: 'SourceLost', at: T0 + 950_000 }, { type: 'Tick', at: T0 + 1_520_000 });
+    expect(s.cursor).toBe(7);
+
+    // OBS comes back showing Servizio 2 on PLAYOUT (slot 5), not the guessed block-3 studio slot.
+    s = run(
+      s,
+      { type: 'SourceRestored', at: T0 + 1_520_000 },
+      { type: 'DeckItemStarted', at: T0 + 1_520_000, index: 1, path: 'D:/media/servizio2.mp4', title: 'Servizio 2', durationMs: 120_000 },
+      { type: 'ProgramSceneChanged', at: T0 + 1_520_000, scene: 'PLAYOUT', deckOnProgram: true },
+    );
+    // The guess is discarded: resync rolls back to the pre-loss position and the normal match then enters
+    // the real slot 5. Block 3 (time-started) is un-started and slot 7 is pending again, not a done slot.
+    expect(s.cursor).toBe(5);
+    expect(s.returnSlot).toBeNull();
+    expect(s.blockRt[3]!.startedAt).toBeNull();
+    expect(s.slotRt[7]!.status).toBe('pending');
+    expect(s.slotRt[5]!.status).toBe('onair');
+    expect(s.slotRt.filter((r) => r.status === 'onair')).toHaveLength(1);
     expect(s.ambiguous).toBe(false);
+  });
+
+  it('with further blocks remaining, the second iteration measures from the resume slot and the restore still resyncs', () => {
+    // A shorter excursion inside block 0 (Servizio 1 skipped then aired out of order: cursor 1, returnSlot
+    // 2) leaves two blocks to hand over: block 0 -> break -> block 2.
+    let s = run(
+      liveState(),
+      { type: 'Goto', at: T0 + 100_000, slot: 2 },
+      { type: 'DeckItemStarted', at: T0 + 200_000, index: 0, path: 'D:/media/servizio1.mp4', title: 'Servizio 1', durationMs: 185_000 },
+      { type: 'ProgramSceneChanged', at: T0 + 200_000, scene: 'PLAYOUT', deckOnProgram: true },
+    );
+    expect(s.cursor).toBe(1);
+    expect(s.returnSlot).toBe(2);
+
+    s = run(s, { type: 'SourceLost', at: T0 + 250_000 }, { type: 'Tick', at: T0 + 950_000 });
+    expect(s.cursor).toBe(4);
+    expect(s.returnSlot).toBeNull();
+    expect(s.blockRt[1]).toMatchObject({ startedAt: T0 + 720_000, startedBy: 'time' });
+    expect(s.blockRt[2]).toMatchObject({ startedAt: T0 + 900_000, startedBy: 'time' });
+    // The guessed range is exactly the break (3) and the block-2 studio slot (4): the resume slot 2 itself
+    // was really observed and stays non-provisional, and the second iteration measured from slot 3.
+    expect(s.slotRt[2]!.provisional).toBe(false);
+    expect(s.slotRt[3]!.provisional).toBe(true);
+    expect(s.slotRt[4]!.provisional).toBe(true);
+
+    // The real break arrives: it is a correction into the never-observed guessed gap, so both time-started
+    // blocks roll back and the break enters as observed.
+    s = run(
+      s,
+      { type: 'SourceRestored', at: T0 + 950_000 },
+      { type: 'ProgramSceneChanged', at: T0 + 950_000, scene: 'BREAK', deckOnProgram: false },
+    );
+    expect(s.cursor).toBe(3);
+    expect(s.blockRt[1]).toMatchObject({ startedAt: T0 + 950_000, startedBy: 'obs' });
+    expect(s.blockRt[2]).toMatchObject({ startedAt: null, startedBy: null });
+  });
+
+  it('no stale returnSlot survives the hand-over: Next moves forward and the time hand-over works again', () => {
+    let s = run(
+      liveState(),
+      { type: 'Goto', at: T0 + 100_000, slot: 2 },
+      { type: 'DeckItemStarted', at: T0 + 200_000, index: 0, path: 'D:/media/servizio1.mp4', title: 'Servizio 1', durationMs: 185_000 },
+      { type: 'ProgramSceneChanged', at: T0 + 200_000, scene: 'PLAYOUT', deckOnProgram: true },
+    );
+    expect(s.cursor).toBe(1);
+    expect(s.returnSlot).toBe(2);
+
+    s = run(s, { type: 'SourceLost', at: T0 + 250_000 }, { type: 'Tick', at: T0 + 750_000 });
+    expect(s.cursor).toBe(3); // one hand-over: block 0 -> break
+    expect(s.returnSlot).toBeNull();
+
+    const next = run(s, { type: 'Next', at: T0 + 750_001 });
+    expect(next.cursor).toBe(4); // forward, not backwards to the stale resume slot
+
+    // OBS confirms the new block (no rollback) and Servizio 2 is dropped, so the ordinary time hand-over
+    // from block 2 to Chiusura must be scheduled again: with a stale returnSlot `studioHandOver` would
+    // wrongly return null.
+    const restored = run(
+      next,
+      { type: 'SourceRestored', at: T0 + 760_000 },
+      { type: 'ProgramSceneChanged', at: T0 + 760_000, scene: 'CAM 1', deckOnProgram: false },
+      { type: 'DeckPlaylistChanged', at: T0 + 800_000, items: [{ ...SOLO_FUTSAL_DECK[0]! }] },
+    );
+    expect(restored.cursor).toBe(4);
+    expect(restored.ambiguous).toBe(false);
+    expect(nextTickAt(restored)).toBe(T0 + 1_350_001);
   });
 });
