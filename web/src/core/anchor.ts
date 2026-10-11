@@ -38,11 +38,19 @@ export function remainingAt(anchor: Anchor, now: number): number | null {
  */
 export function anchorFrame(anchor: Anchor | null, now: number, staleSince: number | null, prevTicks: number | null): AnchorFrame {
   const stale = staleSince !== null;
-  if (anchor === null || anchor.kind === 'unknown' || (staleSince !== null && now - staleSince > STALE_BLANK_MS)) {
+  if (
+    anchor === null ||
+    anchor.kind === 'unknown' ||
+    !Number.isFinite(now) ||
+    (staleSince !== null && (Number.isNaN(staleSince) || now - staleSince > STALE_BLANK_MS))
+  ) {
     const source = anchor !== null && anchor.kind !== 'unknown' ? anchor.source : null;
     return { text: UNKNOWN_TEXT, ticks: null, remainingMs: null, source, paused: false, stale };
   }
   const remainingMs = remainingAt(anchor, staleSince ?? now)!;
+  if (!Number.isFinite(remainingMs)) {
+    return { text: UNKNOWN_TEXT, ticks: null, remainingMs: null, source: anchor.source, paused: false, stale };
+  }
   const ticks = stableTicks(prevTicks, remainingMs);
   return { text: tickText(ticks), ticks, remainingMs, source: anchor.source, paused: anchor.kind === 'frozen', stale };
 }

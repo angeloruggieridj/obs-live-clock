@@ -48,4 +48,31 @@ describe('anchorFrame', () => {
     expect(anchorFrame(cd(WALL + 41_100), WALL, null, 41).text).toBe('0:41');
     expect(anchorFrame(cd(WALL + 41_100), WALL, null, null).text).toBe('0:42');
   });
+
+  it('blanks on a non-finite "now", keeping the source', () => {
+    expect(anchorFrame(cd(WALL + 60_000), Number.NaN, null, null)).toEqual({
+      text: '—', ticks: null, remainingMs: null, source: 'measured', paused: false, stale: false,
+    });
+    expect(anchorFrame(cd(WALL + 60_000), Number.POSITIVE_INFINITY, null, null)).toEqual({
+      text: '—', ticks: null, remainingMs: null, source: 'measured', paused: false, stale: false,
+    });
+  });
+
+  it('blanks on a NaN "staleSince", while -Infinity stays blank as today', () => {
+    expect(anchorFrame(cd(WALL + 60_000), WALL, Number.NaN, null)).toEqual({
+      text: '—', ticks: null, remainingMs: null, source: 'measured', paused: false, stale: true,
+    });
+    expect(anchorFrame(cd(WALL + 60_000), WALL, Number.NEGATIVE_INFINITY, null)).toMatchObject({
+      text: '—', ticks: null, remainingMs: null, source: 'measured', stale: true,
+    });
+  });
+
+  it('blanks when the anchor value is not finite', () => {
+    expect(anchorFrame({ kind: 'frozen', valueMs: Number.NaN, source: 'measured' }, WALL, null, null)).toEqual({
+      text: '—', ticks: null, remainingMs: null, source: 'measured', paused: false, stale: false,
+    });
+    expect(anchorFrame({ kind: 'frozen', valueMs: Number.POSITIVE_INFINITY, source: 'measured' }, WALL, null, null).text).toBe('—');
+    expect(anchorFrame(cd(Number.NaN), WALL, null, null).text).toBe('—');
+    expect(anchorFrame(cd(Number.POSITIVE_INFINITY), WALL, null, null).text).toBe('—');
+  });
 });
