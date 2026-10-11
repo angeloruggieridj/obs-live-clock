@@ -124,6 +124,21 @@ describe('<AnchoredProgress>, <AnchoredWall>, <SourceBadge>, useFrameValue', () 
     expect(unknown!.dataset.known).toBe('false');
   });
 
+  it('freezes the progress bar while stale, then blanks it after 10 s', () => {
+    const { container, advance, update } = renderLive(<AnchoredProgress anchor={cd(WALL + 50_000)} durationMs={100_000} />, store());
+    const bar = container.querySelector<HTMLElement>('.progress-fill')!;
+    expect(scaleOf(bar)).toBeCloseTo(0.5, 3);
+    expect(bar.dataset.stale).toBe('false');
+    update({ stale: true, staleSince: WALL });
+    advance(3_000);
+    expect(bar.dataset.stale).toBe('true');
+    expect(bar.dataset.known).toBe('true');
+    expect(scaleOf(bar)).toBeCloseTo(0.5, 3);
+    advance(7_001);
+    expect(bar.dataset.known).toBe('false');
+    expect(scaleOf(bar)).toBe(0);
+  });
+
   it('shows the server wall clock, and "—" before the first sample', () => {
     const s = store();
     const { container, advance, frames } = renderLive(<AnchoredWall className="w" />, s);

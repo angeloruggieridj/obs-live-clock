@@ -38,4 +38,18 @@ describe('<ConnectionOverlay>', () => {
     act(() => vi.advanceTimersByTime(1));
     expect(reload).toHaveBeenCalledTimes(1);
   });
+
+  it('does not restart the reload timer when the parent re-renders with a new reload identity', () => {
+    vi.useFakeTimers();
+    const reload = vi.fn();
+    const s = new StaticStore(snapshotOf<'presenter'>(studioView(), { connection: 'incompatible' }));
+    const { rerender } = renderLive(<ConnectionOverlay reload={() => reload()} />, s);
+    for (let i = 0; i < 3; i++) {
+      act(() => vi.advanceTimersByTime(3_000));
+      rerender(<ConnectionOverlay reload={() => reload()} />);
+    }
+    expect(reload).not.toHaveBeenCalled();
+    act(() => vi.advanceTimersByTime(1_000));
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
 });

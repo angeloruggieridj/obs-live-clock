@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import { useLayoutEffect, useRef } from 'react';
-import { remainingAt } from '../core/anchor';
+import { STALE_BLANK_MS, remainingAt } from '../core/anchor';
 import type { Anchor } from '../core/views';
 import { useLive, useSnapshot } from './live-context';
 
@@ -18,23 +18,32 @@ const transformOf = (p: number | null): string => `scaleX(${(p ?? 0).toFixed(4)}
 export function AnchoredProgress({ anchor, durationMs }: { anchor: Anchor; durationMs: number | null }) {
   const { store, frames } = useLive();
   const snap = useSnapshot();
-  const staleSince = snap.stale ? snap.staleSince : null;
+  const staleSince = snap.stale ? (snap.staleSince ?? Number.NEGATIVE_INFINITY) : null;
   const ref = useRef<HTMLDivElement>(null);
-  const at = (): number | null => {
+  /**
+   * Frozen at the stale instant while stale (never counting on as if fresh), and unknown once the data has been
+   * stale longer than STALE_BLANK_MS — a frozen bar on a stale feed is a confident wrong value (same rule as
+   * anchorFrame).
+   */
+  const progressNow = (): number | null => {
     const now = store.serverNow();
-    return now === null ? null : (staleSince ?? now);
+    if (now === null || !Number.isFinite(now)) return null;
+    if (staleSince !== null && (Number.isNaN(staleSince) || now - staleSince > STALE_BLANK_MS)) return null;
+    return progressAt(anchor, durationMs, staleSince ?? now);
   };
-  const first = progressAt(anchor, durationMs, at());
+  const first = progressNow();
 
   useLayoutEffect(() => {
     const el = ref.current;
     if (el === null) return undefined;
     const paint = () => {
-      const p = progressAt(anchor, durationMs, at());
+      const p = progressNow();
       const transform = transformOf(p);
       if (el.style.transform !== transform) el.style.transform = transform;
       const known = String(p !== null);
       if (el.dataset.known !== known) el.dataset.known = known;
+      const stale = String(staleSince !== null);
+      if (el.dataset.stale !== stale) el.dataset.stale = stale;
     };
     paint();
     return frames.subscribe(paint);
@@ -42,7 +51,13 @@ export function AnchoredProgress({ anchor, durationMs }: { anchor: Anchor; durat
 
   return (
     <div className="progress" aria-hidden="true">
-      <div ref={ref} className="progress-fill" data-known={String(first !== null)} style={{ transform: transformOf(first) }} />
+      <div
+        ref={ref}
+        className="progress-fill"
+        data-known={String(first !== null)}
+        data-stale={String(staleSince !== null)}
+        style={{ transform: transformOf(first) }}
+      />
     </div>
   );
 }

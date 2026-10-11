@@ -31,4 +31,27 @@ describe('browserFrameLoop', () => {
     off();
     expect(cancelled).toEqual([7]);
   });
+
+  it('keeps a single pending frame when a subscriber subscribes during a tick', () => {
+    const queue: Array<() => void> = [];
+    const loop = browserFrameLoop((cb) => {
+      queue.push(cb);
+      return queue.length;
+    });
+    const runs: string[] = [];
+    let subscribed = false;
+    loop.subscribe(() => {
+      runs.push('a');
+      if (!subscribed) {
+        subscribed = true;
+        loop.subscribe(() => runs.push('b'));
+      }
+    });
+    expect(queue).toHaveLength(1);
+    queue.shift()!(); // frame 1: the 'a' subscriber subscribes 'b' from inside the tick
+    expect(queue).toHaveLength(1); // no second raf: the handle scheduled during the tick is the only one
+    queue.shift()!(); // frame 2: each subscriber runs once
+    expect(runs).toEqual(['a', 'a', 'b']);
+    expect(queue).toHaveLength(1);
+  });
 });

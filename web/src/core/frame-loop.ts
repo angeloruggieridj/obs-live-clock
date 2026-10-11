@@ -22,7 +22,8 @@ export function browserFrameLoop(
         report(err);
       }
     }
-    if (subscribers.size > 0) handle = raf(tick);
+    // A subscriber added from inside the tick already scheduled the next frame; do not schedule a second one.
+    if (handle === null && subscribers.size > 0) handle = raf(tick);
   };
   return {
     subscribe(fn) {
