@@ -141,17 +141,19 @@ e chiude.
 
    ```bash
    TOKEN=$(cat "${OLC_DATA_DIR:-$APPDATA/obs-live-clock}/secret.token")
-   curl -sS -o /dev/null -w '%{http_code}\n' \
+   read -rsp 'Password OBS: ' OBS_PW; echo
+   printf '{"host":"127.0.0.1","port":4455,"password":"%s"}' "$OBS_PW" | curl -sS -o /dev/null -w '%{http_code}\n' \
      -X POST http://127.0.0.1:4460/api/internal/obs-credentials \
      -H "Authorization: Bearer $TOKEN" \
      -H 'Content-Type: application/json' \
-     --data-binary @- <<'JSON'
-{"host":"127.0.0.1","port":4455,"password":"<PASSWORD_OBS>"}
-JSON
+     --data-binary @-
+   unset OBS_PW
    ```
 
-   Il corpo viene passato da **stdin** (`--data-binary @-` con here-doc), così la password **non** compare
-   sulla riga di comando né quindi nella shell history. L'endpoint accetta solo richieste da **loopback**,
+   La password viene chiesta con `read -s` (non compare a schermo né nella cronologia, perché non è mai
+   digitata in un comando) e passata a `curl` da **stdin** (`--data-binary @-`), quindi non compare sulla
+   riga di comando. Non usare un here-doc con la password scritta dentro: la shell lo registrerebbe nella
+   cronologia. L'endpoint accetta solo richieste da **loopback**,
    richiede il token come `Bearer` e risponde `204 No Content` in caso di successo. Corpo: `host`
    (predefinito `127.0.0.1`), `port`, `password`. Se il plugin (Plan 6) non è installato, l'operatore può
    anche mettere `host`/`port`/`password` in `settings.obs` di `settings.json` (modalità remote).
