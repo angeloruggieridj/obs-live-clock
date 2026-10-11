@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import { describe, expect, it } from 'vitest';
 import { controlView } from '../../src/engine/control-view';
-import { T0, liveState, run } from '../helpers';
+import { T0, freshState, liveState, run } from '../helpers';
 
 const toWall = (m: number) => 1_790_000_000_000 + m;
 
@@ -13,10 +13,19 @@ describe('controlView', () => {
     expect(v.rows[0]).toEqual({
       slot: 0, blockIndex: 0, blockName: 'Primo blocco', kind: 'studio', title: 'Primo blocco',
       status: 'onair', provisional: false, durationMs: null, durationSource: 'planned',
+      plannedStartAtWall: toWall(T0),
       startedAtWall: toWall(T0), endedAtWall: null,
     });
     expect(v.rows[1]).toMatchObject({ kind: 'media', title: 'Servizio 1', status: 'pending', durationMs: 185_000, durationSource: 'measured' });
     expect(v.rows[3]).toMatchObject({ kind: 'break', blockName: 'Break 1', durationMs: 180_000, durationSource: 'planned' });
+    expect(v.rows[3]!.plannedStartAtWall).toBe(toWall(T0 + 720_000));
+    expect(v.presets).toEqual({
+      messages: [
+        { id: 'stringi', text: 'STRINGI', dismiss: { kind: 'timeout', ms: 10_000 } },
+        { id: 'cam2', text: 'GUARDA CAM 2', dismiss: { kind: 'manual' } },
+      ],
+      adjustStepMs: 30_000,
+    });
     expect(v.cursor).toBe(0);
     expect(v.presenter.phase).toBe('live');
     expect(v).toMatchObject({ control: 'auto', obs: 'ok', ambiguous: false, returnSlot: null, offScript: null, decisions: [] });
@@ -39,5 +48,10 @@ describe('controlView', () => {
     const v = controlView(run(liveState(), { type: 'SourceLost', at: T0 + 1 }), T0 + 2, toWall);
     expect(v.obs).toBe('lost');
     expect(v.rows.every((r) => r.durationSource === 'estimated')).toBe(true);
+  });
+
+  it('has no planned start times before the program starts', () => {
+    const v = controlView(freshState(), 0, toWall);
+    expect(v.rows.every((r) => r.plannedStartAtWall === null)).toBe(true);
   });
 });

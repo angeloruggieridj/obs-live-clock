@@ -1,29 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import { rundownDurationMs } from '@olc/shared';
+import type { Anchor, PresenterView } from '@olc/shared';
+export type { Anchor, PresenterView } from '@olc/shared';
 import { slotDuration } from './rundown';
 import { computeTiming, type Remaining } from './snapshot';
-import type { LiveState, MonoMs, Source } from './types';
-
-export type Anchor =
-  | { kind: 'countdown'; endsAt: number; source: Source }
-  | { kind: 'frozen'; valueMs: number; source: Source }
-  | { kind: 'unknown' };
-
-export interface PresenterView {
-  phase: 'preshow' | 'live' | 'ended';
-  segment: 'studio' | 'media' | 'break' | null;
-  rundownFinished: boolean;
-  block: { index: number; name: string; anchor: Anchor } | null;
-  onAir: { title: string; anchor: Anchor; startedAtWall: number | null; durationMs: number | null } | null;
-  returnTo: { blockName: string; anchor: Anchor } | null;
-  next: { title: string; durationMs: number; source: Source } | null;
-  programEnd: { anchor: Anchor; endsAtWall: number | null } | null;
-  delay: { ms: number; source: Source } | null;
-  thresholds: { warnMs: number; returnImminentMs: number };
-  message: { text: string } | null;
-  status: { rec: boolean; stream: boolean; recPaused: boolean; obs: 'ok' | 'lost'; control: 'auto' | 'manual' };
-  preshow: { plannedStart: string | null; totalDurationMs: number; upcoming: string[] } | null;
-}
+import { plannedEndAt } from './timing';
+import type { LiveState, MonoMs } from './types';
 
 function toAnchor(r: Remaining | null, toWall: (m: MonoMs) => number): Anchor {
   if (r === null) return { kind: 'unknown' };
@@ -51,6 +33,22 @@ function upcoming(s: LiveState): string[] {
     if (titles.length === 4) break;
   }
   return titles;
+}
+
+/** FINE: the latest block end is the program end (endProgram closes every started block at the same instant). */
+function endedSummary(s: LiveState): PresenterView['ended'] {
+  if (s.phase !== 'ended' || s.t0 === null) return null;
+  let endAt: MonoMs | null = null;
+  for (const rt of s.blockRt) {
+    if (rt.endedAt !== null && (endAt === null || rt.endedAt > endAt)) endAt = rt.endedAt;
+  }
+  if (endAt === null) return null;
+  const plannedEnd = plannedEndAt(s, s.episode.blocks.length - 1)!;
+  return {
+    totalMs: endAt - s.t0,
+    finalOffsetMs: endAt - plannedEnd,
+    source: s.obs === 'lost' || s.ambiguous ? 'estimated' : 'measured',
+  };
 }
 
 export function presenterView(s: LiveState, now: MonoMs, toWall: (mono: MonoMs) => number): PresenterView {
@@ -89,5 +87,6 @@ export function presenterView(s: LiveState, now: MonoMs, toWall: (mono: MonoMs) 
       s.phase === 'preshow'
         ? { plannedStart: s.episode.plannedStart, totalDurationMs: rundownDurationMs(s.episode), upcoming: upcoming(s) }
         : null,
+    ended: endedSummary(s),
   };
 }

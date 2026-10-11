@@ -31,7 +31,8 @@ export const ClientMessage = z.discriminatedUnion('type', [
 ]);
 export type ClientMessage = z.infer<typeof ClientMessage>;
 
-export type ErrorCode = 'invalid_message' | 'protocol_mismatch' | 'hello_required' | 'no_episode' | 'internal' | 'forbidden';
+export const ErrorCodeSchema = z.enum(['invalid_message', 'protocol_mismatch', 'hello_required', 'no_episode', 'internal', 'forbidden']);
+export type ErrorCode = z.infer<typeof ErrorCodeSchema>;
 
 /** Messages the server sends. `view` is the engine projection for the client's role (typed in Plan 4). */
 export type ServerMessage =
@@ -41,3 +42,13 @@ export type ServerMessage =
   | { type: 'time.pong'; t0: number; serverWall: number }
   | { type: 'ack'; id: string; changed: boolean }
   | { type: 'error'; id: string | null; code: ErrorCode; message: string };
+
+/** Client-side validation of what the server sends. `view` is validated per role by the client (shared view schemas). */
+export const ServerMessageSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('welcome'), serverVersion: z.string(), instanceId: z.string(), protocol: z.number().int() }),
+  z.object({ type: z.literal('view'), rev: z.number().int().nonnegative(), role: ClientRole, view: z.unknown() }),
+  z.object({ type: z.literal('heartbeat'), rev: z.number().int().nonnegative(), serverWall: z.number() }),
+  z.object({ type: z.literal('time.pong'), t0: z.number(), serverWall: z.number() }),
+  z.object({ type: z.literal('ack'), id: z.string(), changed: z.boolean() }),
+  z.object({ type: z.literal('error'), id: z.string().nullable(), code: ErrorCodeSchema, message: z.string() }),
+]);

@@ -69,4 +69,17 @@ describe('presenterView', () => {
     expect(v.message).toEqual({ text: 'STRINGI' });
     expect(v.status).toEqual({ rec: true, stream: false, recPaused: false, obs: 'ok', control: 'auto' });
   });
+
+  it('ended: total program time and final offset from the planned end', () => {
+    const s = run(liveState(), { type: 'EndProgram', at: T0 + 1_700_000 });
+    const v = presenterView(s, T0 + 1_800_000, toWall);
+    expect(v.phase).toBe('ended');
+    expect(v.ended).toEqual({ totalMs: 1_700_000, finalOffsetMs: 80_000, source: 'measured' });
+  });
+
+  it('ended is null until the program ends, and estimated when OBS was lost', () => {
+    expect(presenterView(liveState(), T0 + 1, toWall).ended).toBeNull();
+    const s = run(liveState(), { type: 'SourceLost', at: T0 + 1 }, { type: 'EndProgram', at: T0 + 600_000 });
+    expect(presenterView(s, T0 + 600_001, toWall).ended).toEqual({ totalMs: 600_000, finalOffsetMs: -1_020_000, source: 'estimated' });
+  });
 });

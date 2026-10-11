@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-import type { Episode, MessageDismiss } from '@olc/shared';
+import type { DecisionKind, Episode, MessageDismiss, SlotKind, SlotStatus, Source } from '@olc/shared';
+export type { DecisionKind, SlotKind, SlotStatus, Source };
 
 /** Monotonic milliseconds on the server. Never wall-clock. */
 export type MonoMs = number;
-export type Source = 'measured' | 'planned' | 'estimated';
 export type OutputKind = 'rec' | 'stream';
 
 /** One item of Playlist Deck `GetItems`. `durationMs` is -1 while unknown. */
@@ -58,8 +58,6 @@ export type Command =
 export type Tick = { type: 'Tick'; at: MonoMs };
 export type EngineInput = DomainEvent | Command | Tick;
 
-export type SlotKind = 'studio' | 'media' | 'break';
-
 /** One position of the flattened rundown. */
 export interface Slot {
   index: number;
@@ -73,8 +71,6 @@ export interface Slot {
   /** Planned duration: media planned duration, break block duration, 0 for studio. */
   plannedDurationMs: number;
 }
-
-export type SlotStatus = 'pending' | 'onair' | 'done' | 'postponed' | 'dropped';
 
 export interface SlotRuntime {
   status: SlotStatus;
@@ -109,8 +105,6 @@ export interface ActiveMessage {
   shownAt: MonoMs;
   expiresAt: MonoMs | null;
 }
-
-export type DecisionKind = 'output_restart' | 'all_outputs_stopped';
 
 export interface Decision {
   id: number;

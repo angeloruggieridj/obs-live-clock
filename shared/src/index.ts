@@ -3,3 +3,4 @@ export * from './model/format';
 export * from './model/episode';
 export * from './model/validate';
 export * from './protocol/messages';
+export * from './live/views';

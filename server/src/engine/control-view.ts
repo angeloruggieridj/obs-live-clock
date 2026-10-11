@@ -1,43 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-import { presenterView, type PresenterView } from './projection';
+import type { ControlDecision, ControlView, RundownRow } from '@olc/shared';
+import { presenterView } from './projection';
 import { slotDuration } from './rundown';
-import type { Decision, LiveState, MonoMs, SlotKind, SlotStatus, Source } from './types';
+import { plannedStartAt } from './timing';
+import type { LiveState, MonoMs } from './types';
 
-export interface RundownRow {
-  slot: number;
-  blockIndex: number;
-  blockName: string;
-  kind: SlotKind;
-  title: string;
-  status: SlotStatus;
-  provisional: boolean;
-  durationMs: number | null;
-  durationSource: Source;
-  startedAtWall: number | null;
-  endedAtWall: number | null;
-}
-
-export interface ControlDecision {
-  id: number;
-  kind: Decision['kind'];
-  atWall: number;
-  defaultChoice: string;
-  choice: string;
-  confirmed: boolean;
-}
-
-export interface ControlView {
-  episode: { id: string; name: string };
-  presenter: PresenterView;
-  control: 'auto' | 'manual';
-  obs: 'ok' | 'lost';
-  ambiguous: boolean;
-  cursor: number;
-  returnSlot: number | null;
-  offScript: { scene: string; sinceWall: number } | null;
-  decisions: ControlDecision[];
-  rows: RundownRow[];
-}
+export type { ControlDecision, ControlView, RundownRow } from '@olc/shared';
 
 /** Data for the dock and the extended control view (SPEC §8). Pure. */
 export function controlView(s: LiveState, now: MonoMs, toWall: (mono: MonoMs) => number): ControlView {
@@ -73,9 +41,11 @@ export function controlView(s: LiveState, now: MonoMs, toWall: (mono: MonoMs) =>
         provisional: rt.provisional,
         durationMs: slot.kind === 'studio' ? null : d.ms,
         durationSource: degraded ? 'estimated' : d.source,
+        plannedStartAtWall: wall(plannedStartAt(s, slot.blockIndex)),
         startedAtWall: wall(rt.startedAt),
         endedAtWall: wall(rt.endedAt),
       };
     }),
+    presets: { messages: s.episode.messages.map((m) => ({ ...m })), adjustStepMs: s.episode.preset.adjustStepMs },
   };
 }
