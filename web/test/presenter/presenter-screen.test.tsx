@@ -155,6 +155,29 @@ describe('<PresenterScreen>', () => {
     expect(p.q('.p-next-title')).toBeNull();
   });
 
+  it('resets the main tally to none when a warn/over studio becomes ended', () => {
+    const p = show(studioView({ block: { index: 2, name: 'Secondo blocco', anchor: cd(WALL + 61_000) } }));
+    p.advance(0);
+    expect(p.q('.p-main')!.dataset.tally).toBe('none');
+    p.advance(1_000);
+    expect(p.q('.p-main')!.dataset.tally).toBe('warn');
+    p.advance(60_000);
+    expect(p.q('.p-main')!.dataset.tally).toBe('over');
+    p.update({ view: endedView() });
+    expect(p.mode()).toBe('ended');
+    expect(p.q('.p-main')!.dataset.tally).toBe('none');
+  });
+
+  it('resets the main tally to none when an overrun loses the episode', () => {
+    const p = show(studioView({ rundownFinished: true, block: { index: 3, name: 'Chiusura', anchor: cd(WALL - 72_000) } }));
+    p.advance(0);
+    expect(p.mode()).toBe('overrun');
+    expect(p.q('.p-main')!.dataset.tally).toBe('over');
+    p.update({ view: null });
+    expect(p.mode()).toBe('noepisode');
+    expect(p.q('.p-main')!.dataset.tally).toBe('none');
+  });
+
   it('OBS lost: warning in the strip and STIMATO on estimated values', () => {
     const p = show(
       studioView({

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-import { useRef } from 'react';
+import { useLayoutEffect, useRef } from 'react';
 import { STALE_BLANK_MS, type AnchorFrame } from '../core/anchor';
 import type { Translate } from '../core/i18n';
 import { durationText, signedText, wallText } from '../core/time-format';
@@ -82,6 +82,12 @@ function MainTile({ view, mode }: { view: PresenterView | null; mode: ScreenMode
   const anchor = mainAnchor(view, mode);
   const tally = (frame: AnchorFrame) => mainTally(view, mode, frame.ticks);
   const plannedStart = view?.preshow?.plannedStart ?? null;
+  // React owns data-tally: the frame loop writes it imperatively (AnchoredTime), so a mode without a writer
+  // (ended / noepisode / any screen with no main anchor) must reset what the loop left behind on the way in.
+  useLayoutEffect(() => {
+    const el = tileRef.current;
+    if (el !== null && anchor === null) el.dataset.tally = 'none';
+  }, [mode, anchor]);
   return (
     <section className="tile p-main" ref={tileRef} data-tally="none">
       <div className="label">

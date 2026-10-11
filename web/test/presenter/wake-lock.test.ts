@@ -43,6 +43,17 @@ describe('keepScreenAwake', () => {
     expect(sentinels[1]!.released).toBe(true);
   });
 
+  it('stop() removes the visibilitychange listener', async () => {
+    const doc = fakeDoc();
+    const { nav, sentinels } = fakeNav();
+    const remove = vi.spyOn(doc, 'removeEventListener');
+    const stop = keepScreenAwake(nav, doc, () => {});
+    await flush();
+    stop();
+    expect(remove).toHaveBeenCalledWith('visibilitychange', expect.any(Function));
+    expect(sentinels[0]!.released).toBe(true);
+  });
+
   it('waits for the page to be visible', async () => {
     const { nav, request } = fakeNav();
     keepScreenAwake(nav, fakeDoc('hidden'), () => {});
