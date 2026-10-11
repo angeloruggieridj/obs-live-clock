@@ -1,8 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+import { networkInterfaces } from 'node:os';
 import OBSWebSocket from 'obs-websocket-js/json';
 import { WebSocket } from 'ws';
 import { afterEach, describe, expect, it } from 'vitest';
 import { startObsSim, type ObsSim, type ObsSimOptions } from '../src/index';
+
+const lanAddress: string | undefined = Object.values(networkInterfaces())
+  .flat()
+  .find((i) => i !== undefined && i.family === 'IPv4' && !i.internal)?.address;
 
 const SCENES = {
   'CAM 1': [],
@@ -158,20 +163,28 @@ describe('obs-sim', () => {
     expect(await closed).toBe(1006);
   });
 
-  it('binds loopback by default and honours options.host', async () => {
+  it('binds loopback by default', async () => {
     const sim = await start();
     const obs = await connected(sim);
     expect((await obs.call('GetVersion')).obsWebSocketVersion).toBe('5.5.0');
 
-    const other = await start({ host: '127.0.0.2' });
+    if (lanAddress !== undefined) {
+      const direct = new OBSWebSocket();
+      clients.push(direct);
+      await expect(direct.connect(`ws://${lanAddress}:${sim.port}`)).rejects.toBeTruthy();
+    }
+  });
+
+  it.skipIf(lanAddress === undefined)('honours options.host', async () => {
+    const sim = await start({ host: lanAddress });
     const direct = new OBSWebSocket();
     clients.push(direct);
-    const hello = await direct.connect(`ws://127.0.0.2:${other.port}`);
+    const hello = await direct.connect(`ws://${lanAddress}:${sim.port}`);
     expect(hello.negotiatedRpcVersion).toBe(1);
 
     const loopback = new OBSWebSocket();
     clients.push(loopback);
-    await expect(loopback.connect(`ws://127.0.0.1:${other.port}`)).rejects.toBeTruthy();
+    await expect(loopback.connect(`ws://127.0.0.1:${sim.port}`)).rejects.toBeTruthy();
   });
 
   it('closes a request sent before Identify with 4007, password or not', async () => {
