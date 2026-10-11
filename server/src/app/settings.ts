@@ -21,9 +21,18 @@ export async function loadSettings(path: string, onInvalid?: (err: unknown) => v
     return (await readJson(path, Settings)) ?? Settings.parse({});
   } catch (err) {
     // A corrupt or schema-invalid settings file must not stop the app: fall back to the defaults and report.
-    onInvalid?.(err);
+    onInvalid?.(sanitizeSettingsError(err));
     return Settings.parse({});
   }
+}
+
+/**
+ * A `JSON.parse` SyntaxError quotes the surrounding text, which can include `settings.obs.password`; replace it
+ * with a fixed message so the raw text never reaches a log. Other errors are returned unchanged.
+ */
+function sanitizeSettingsError(err: unknown): unknown {
+  if (err instanceof SyntaxError) return new Error('settings.json is not valid JSON');
+  return err;
 }
 
 /** NF3: localhost only unless LAN access is explicitly enabled. */

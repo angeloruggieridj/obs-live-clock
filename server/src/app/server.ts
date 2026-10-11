@@ -124,10 +124,42 @@ export async function buildServer(opts: ServerOptions): Promise<BuiltServer> {
   registerObsRoutes(app, { obs, episodes, clock, scheduler });
   registerWs(app, { runtime, clock, version, instanceId, heartbeatMs: opts.heartbeatMs ?? 1_000 });
   app.addHook('onClose', async () => {
-    await obs.stop();
-    // Flush persistence before disposing so a snapshot/journal write queued by the last dispatch lands.
-    await runtime.flush();
-    runtime.dispose();
+    try {
+      await withTimeout(obs.stop(), OBS_STOP_TIMEOUT_MS, clock, scheduler);
+    } finally {
+      // Flush persistence before disposing so a snapshot/journal write queued by the last dispatch lands.
+      await runtime.flush();
+      runtime.dispose();
+    }
   });
   return { app, runtime, instanceId };
+}
+
+/** Bounds on how long shutdown waits for OBS: a hung socket must not block flush/dispose forever. */
+const OBS_STOP_TIMEOUT_MS = 3_000;
+
+/** Resolves with `promise`, or rejects once the injected clock passes `at + ms`. The losing result is dropped. */
+function withTimeout<T>(promise: Promise<T>, ms: number, clock: Clock, scheduler: Scheduler): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const cancel = scheduler.setTimer(clock.now() + ms, () => {
+      if (settled) return;
+      settled = true;
+      reject(new Error(`OBS stop timed out after ${ms} ms`));
+    });
+    promise.then(
+      (value) => {
+        if (settled) return;
+        settled = true;
+        cancel();
+        resolve(value);
+      },
+      (err: unknown) => {
+        if (settled) return;
+        settled = true;
+        cancel();
+        reject(err);
+      },
+    );
+  });
 }

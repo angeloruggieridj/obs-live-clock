@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PROTOCOL_VERSION, type ServerMessage } from '@olc/shared';
 import { soloFutsalFormat } from '@olc/shared/testing';
 import { FakeTime } from '../../src/clock/clock';
+import { ObsService } from '../../src/obs/obs-service';
 import { buildTestServer } from '../support/server';
 import { tempDir } from '../support/tmp';
 import { connect } from '../support/ws-client';
@@ -83,6 +84,28 @@ describe('buildServer', () => {
 
     await app.close();
     apps.pop();
+
+    expect(order).toEqual(['flush', 'dispose']);
+  });
+
+  it('still flushes and disposes when obs.stop() throws, in that order', async () => {
+    const { app, runtime } = await boot(await tempDir(), new FakeTime());
+    const order: string[] = [];
+    const flush = runtime.flush.bind(runtime);
+    const dispose = runtime.dispose.bind(runtime);
+    vi.spyOn(runtime, 'flush').mockImplementation(async () => {
+      order.push('flush');
+      await flush();
+    });
+    vi.spyOn(runtime, 'dispose').mockImplementation(() => {
+      order.push('dispose');
+      dispose();
+    });
+    vi.spyOn(ObsService.prototype, 'stop').mockRejectedValueOnce(new Error('stop failed'));
+
+    await expect(app.close()).rejects.toThrow('stop failed');
+    apps.pop();
+    vi.restoreAllMocks();
 
     expect(order).toEqual(['flush', 'dispose']);
   });

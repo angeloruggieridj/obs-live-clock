@@ -104,7 +104,7 @@ Tutte le chiamate interne vanno in loopback con `Authorization: Bearer <token>`,
 Esiste una sola istanza per volta: un lock file nella cartella dati. Un secondo avvio segnala l'istanza già attiva ed esce.
 
 ### 4.2 ObsConnection
-- Usa `obs-websocket-js` con riconnessione a backoff esponenziale (0,5 s → 5 s max) e jitter.
+- Usa `obs-websocket-js` con riconnessione a backoff esponenziale (0,5 s → 5 s max), senza jitter.
 - Si iscrive agli eventi: `General`, `Scenes`, `Inputs`, `MediaInputs`, `Outputs`, `SceneItems`, `Vendors`.
 - **Sincronizzazione iniziale** a ogni connessione: `GetVersion`, `GetCurrentProgramScene`, `GetSceneList`, `GetRecordStatus`, `GetStreamStatus`, grafo delle scene (`GetSceneItemList` ricorsivo, gruppi compresi), `CallVendorRequest(obs-playlist-deck, GetStatus)` e `GetItems`.
 - Produce `ObsConnectionState`: `disconnected | connecting | auth_failed | connected`.
@@ -198,7 +198,7 @@ Al `SourceRestored` segue la sincronizzazione iniziale, poi il matcher riallinea
 
 ### 5.7 Persistenza e ripresa
 - Ogni input accettato viene aggiunto a `live/<episodeId>.log.jsonl` come `{ seq, wallAt, input }`. L'input contiene già `at`, il tempo monotono.
-- `snapshot.json` viene riscritto in modo atomico dopo ogni cambiamento, con `{ schemaVersion, episodeId, wallAt, state }`. Il debounce di 250 ms è rimandato al Piano 3, prima degli eventi `DeckPlayback` a circa 1 Hz.
+- `snapshot.json` viene riscritto in modo atomico dopo ogni cambiamento, con `{ schemaVersion, episodeId, wallAt, state }`. I salvataggi ravvicinati sono **accorpati** (coalescing): resta in coda al più un salvataggio, che quando esegue rilegge lo stato più recente, senza un debounce a tempo.
 - **Ripresa validata.** Prima di accettare lo stato ripristinato, il runtime lo valida: schema della puntata, coerenza dell'id, lunghezze degli array, proiezione di prova. Uno snapshot rotto viene segnalato e ignorato, e uno spettacolo già concluso (`ended`) non viene ripreso.
 - **Ripresa dopo il riavvio.** Il tempo monotono è ancorato all'epoca (`performance.timeOrigin + performance.now()`), quindi i tempi salvati nello snapshot restano validi anche dopo il riavvio, senza bisogno di convertirli. Al riavvio il runtime ricarica lo snapshot e segna OBS come perso (`SourceLost`), quindi tutti i valori sono `estimated`. Quando l'adapter si riconnette, la sincronizzazione iniziale riallinea il rundown. Un salto dell'orologio di sistema (NTP) fra due esecuzioni viene accettato.
 

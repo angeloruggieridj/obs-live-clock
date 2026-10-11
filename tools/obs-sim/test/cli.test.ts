@@ -2,7 +2,8 @@
 import { createServer, type Server } from 'node:net';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { parseArgs, run } from '../src/cli';
+import { parseArgs, run, runLine } from '../src/cli';
+import type { ObsSim } from '../src/index';
 
 const servers: Server[] = [];
 
@@ -37,5 +38,21 @@ describe('obs-sim cli', () => {
     expect(code).toBe(1);
     expect(error).toHaveBeenCalledTimes(1);
     expect(String(error.mock.calls[0]?.[0])).toMatch(/^obs-sim: cannot listen on 127\.0\.0\.1:\d+/);
+  });
+
+  it('joins scene and input names containing spaces', () => {
+    const calls: unknown[] = [];
+    const sim = {
+      setProgram: (scene: string) => calls.push(['program', scene]),
+      setMedia: (input: string, media: unknown) => calls.push(['media', input, media]),
+    } as unknown as ObsSim;
+
+    runLine(sim, 'program CAM 1');
+    runLine(sim, 'media Deck Media playing 1000 5000');
+
+    expect(calls).toEqual([
+      ['program', 'CAM 1'],
+      ['media', 'Deck Media', { state: 'playing', cursor: 1000, duration: 5000 }],
+    ]);
   });
 });

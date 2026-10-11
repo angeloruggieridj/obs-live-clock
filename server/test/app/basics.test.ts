@@ -55,6 +55,21 @@ describe('settings', () => {
     expect(errors).toHaveLength(1);
   });
 
+  it('does not leak the obs password when the settings JSON is malformed', async () => {
+    const dir = await tempDir();
+    const password = 'hunter2';
+    await writeFile(
+      join(dir, 'settings.json'),
+      `{"obs":{"host":"127.0.0.1","port":4455,"password":${password}}}`,
+    );
+    const errors: unknown[] = [];
+    await loadSettings(join(dir, 'settings.json'), (err) => errors.push(err));
+    expect(errors).toHaveLength(1);
+    const message = errors.map((e) => (e instanceof Error ? e.message : String(e))).join('\n');
+    expect(message).not.toContain(password);
+    expect(message).toContain('settings.json is not valid JSON');
+  });
+
   it('parses the optional obs credentials with defaults', () => {
     expect(Settings.parse({ obs: { port: 4456 } }).obs).toEqual({ host: '127.0.0.1', port: 4456 });
   });

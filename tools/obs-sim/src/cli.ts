@@ -31,15 +31,17 @@ function asNumber(value: string | undefined, label: string): number {
 }
 
 /** One stdin line, e.g. `program PLAYOUT`, `rec started`, `media Tappo playing 1000 5000` or `drop`. */
-function runLine(sim: ObsSim, line: string): void {
+export function runLine(sim: ObsSim, line: string): void {
   const [command, ...args] = line.split(/\s+/);
   switch (command) {
     case '':
       return;
-    case 'program':
-      if (args[0] === undefined) throw new Error('program <scene>');
-      sim.setProgram(args[0]);
+    case 'program': {
+      const scene = args.join(' ');
+      if (scene === '') throw new Error('program <scene>');
+      sim.setProgram(scene);
       return;
+    }
     case 'rec':
       sim.setRecord(asOutput(args[0]));
       return;
@@ -49,14 +51,16 @@ function runLine(sim: ObsSim, line: string): void {
     case 'play':
       sim.deckPlay(asNumber(args[0], 'index'));
       return;
-    case 'media':
-      if (args[0] === undefined || args[1] === undefined) throw new Error('media <input> <state> <cursor> <duration>');
-      sim.setMedia(args[0], {
-        state: args[1],
-        cursor: asNumber(args[2], 'cursor'),
-        duration: asNumber(args[3], 'duration'),
-      });
+    case 'media': {
+      if (args.length < 4) throw new Error('media <input> <state> <cursor> <duration>');
+      const state = args[args.length - 3]!;
+      const cursor = args[args.length - 2]!;
+      const duration = args[args.length - 1]!;
+      // The input name may contain spaces: everything before the trailing state/cursor/duration is the name.
+      const input = args.slice(0, args.length - 3).join(' ');
+      sim.setMedia(input, { state, cursor: asNumber(cursor, 'cursor'), duration: asNumber(duration, 'duration') });
       return;
+    }
     case 'drop':
       sim.dropConnections();
       return;

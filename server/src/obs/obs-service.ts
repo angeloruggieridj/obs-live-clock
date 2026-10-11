@@ -140,6 +140,7 @@ export class ObsService {
       onSourceChanged: () => this.adapter?.refreshProgram(),
     });
     this.deck = deck;
+    let started = false;
     try {
       await deck.start();
       // A drop mid-start is detected by onDisconnected bumping the token; never build on a dead connection.
@@ -155,10 +156,12 @@ export class ObsService {
       });
       this.adapter = adapter;
       await adapter.start();
+      started = true;
     } finally {
       if (token === this.connectionToken) {
         this.starting = false;
-        this.settleAfterStart(token);
+        // A rejected start must not be followed by a settle/resync: the connection drives the reconnect.
+        if (started) this.settleAfterStart(token);
       }
     }
   }

@@ -114,9 +114,17 @@ export class DeckAdapter {
     } catch (err) {
       if (!this.running) return;
       this.deps.report(err);
-      // A vendor request failure is not fatal: run with an empty list and keep listening/polling.
+      // A vendor request failure is not fatal, but an empty list must not be published: the engine would
+      // reconcile it as every pending/postponed media slot dropped. Keep the current items unknown, attach
+      // the listener / poll per mode and re-read soon.
       if (!(err instanceof ObsRequestError)) throw err;
-      items = [];
+      if (this.capability === 'events') {
+        this.attach();
+        this.onPlaylistChanged();
+      } else {
+        this.armPoll();
+      }
+      return;
     }
     if (!this.running) return;
     if (this.deps.dispatch({ type: 'DeckPlaylistChanged', items })) this.currentItems = items;

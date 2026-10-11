@@ -372,6 +372,20 @@ describe('ObsService', () => {
     expect(h.serviceErrors.some((e) => e instanceof Error && e.message.includes('still lost'))).toBe(true);
   });
 
+  it('does not resync when the adapter start rejected', async () => {
+    const h = await setup();
+    await h.runtime.load(soloFutsalEpisode());
+    h.failGetSceneListOn(1);
+    h.service.setCredentials({ host: '127.0.0.1', port: 4455 });
+    await flush();
+    await flush();
+    await flush();
+
+    // The failed start is not followed by a resync: only the initial (rejected) graph read happened.
+    expect(h.getSceneListCalls()).toBe(1);
+    expect(h.runtime.getState()?.obs).toBe('lost');
+  });
+
   it('ignores a stale rejected resync so a fast reconnect is not disturbed', async () => {
     const h = await setup();
     await h.runtime.load(soloFutsalEpisode());

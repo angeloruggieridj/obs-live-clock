@@ -101,6 +101,18 @@ describe('ObsAdapter', () => {
     expect(h.dispatched).toEqual([{ type: 'ProgramSceneChanged', scene: 'CAM 1', deckOnProgram: true }]);
   });
 
+  it('does not re-dispatch ProgramSceneChanged when a graph reload leaves deckOnProgram unchanged', async () => {
+    const h = setup();
+    await h.adapter.start();
+    h.dispatched.length = 0;
+    // A change to an item that is not the deck source leaves deckOnProgram at false.
+    h.obs.emit('SceneItemEnableStateChanged', { sceneName: 'CAM 1', sceneItemId: 1, sceneItemEnabled: false });
+    h.time.advance(100);
+    await flush();
+    await flush();
+    expect(h.dispatched).toEqual([]);
+  });
+
   it('polls the visible break filler and deduplicates by extrapolation', async () => {
     const h = setup();
     await h.adapter.start();
@@ -183,6 +195,19 @@ describe('ObsAdapter', () => {
     await expect(h.adapter.start()).rejects.toThrow();
     expect(h.dispatched).toEqual([]);
     expect(h.errors).toHaveLength(1);
+    expect(h.obs.listenerCount('CurrentProgramSceneChanged')).toBe(0);
+    expect(h.time.pending).toBe(0);
+  });
+
+  it('resets running when start rejects, so a later resync is a no-op', async () => {
+    const h = setup();
+    h.obs.respond('GetCurrentProgramScene', () => ({}));
+    await expect(h.adapter.start()).rejects.toThrow();
+    h.obs.respond('GetCurrentProgramScene', () => ({ sceneName: 'CAM 1' }));
+
+    await h.adapter.resync();
+
+    expect(h.dispatched).toEqual([]);
     expect(h.obs.listenerCount('CurrentProgramSceneChanged')).toBe(0);
     expect(h.time.pending).toBe(0);
   });

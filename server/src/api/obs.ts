@@ -215,7 +215,7 @@ function deckIssues(ctx: ObsRoutesContext, episode: Episode): Issue[] {
       severity: 'warning',
       code: 'deck_legacy',
       blockId: null,
-      message: 'The Playlist Deck plugin is older than 1.4.0',
+      message: 'Media matching is unavailable with this Playlist Deck version (events need >= 1.4.0)',
     });
   }
 

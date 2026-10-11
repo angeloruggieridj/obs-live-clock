@@ -145,13 +145,16 @@ e chiude.
      -X POST http://127.0.0.1:4460/api/internal/obs-credentials \
      -H "Authorization: Bearer $TOKEN" \
      -H 'Content-Type: application/json' \
-     -d '{"host":"127.0.0.1","port":4455,"password":"<PASSWORD_OBS>"}'
+     --data-binary @- <<'JSON'
+{"host":"127.0.0.1","port":4455,"password":"<PASSWORD_OBS>"}
+JSON
    ```
 
-   L'endpoint accetta solo richieste da **loopback**, richiede il token come `Bearer` e risponde
-   `204 No Content` in caso di successo. Corpo: `host` (predefinito `127.0.0.1`), `port`, `password`.
-   Se il plugin (Plan 6) non è installato, l'operatore può anche mettere `host`/`port`/`password` in
-   `settings.obs` di `settings.json` (modalità remote).
+   Il corpo viene passato da **stdin** (`--data-binary @-` con here-doc), così la password **non** compare
+   sulla riga di comando né quindi nella shell history. L'endpoint accetta solo richieste da **loopback**,
+   richiede il token come `Bearer` e risponde `204 No Content` in caso di successo. Corpo: `host`
+   (predefinito `127.0.0.1`), `port`, `password`. Se il plugin (Plan 6) non è installato, l'operatore può
+   anche mettere `host`/`port`/`password` in `settings.obs` di `settings.json` (modalità remote).
 
 **Risultato atteso**
 
@@ -509,7 +512,7 @@ done
 **Risultato atteso**
 
 - Fra gli `issues` compare un **warning** `deck_legacy`
-  (`"The Playlist Deck plugin is older than 1.4.0"`).
+  (`"Media matching is unavailable with this Playlist Deck version (events need >= 1.4.0)"`).
 - La lista elementi (`GET /api/deck/items`) e i relativi controlli funzionano comunque. In modalità
   legacy l'adapter **non** aggancia gli eventi del vendor: il plugin viene **interrogato** a
   intervalli (`GetStatus` + `GetItems` ogni 2 s, `POLL_MS = 2_000` in `server/src/obs/deck-adapter.ts`).

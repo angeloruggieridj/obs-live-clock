@@ -55,6 +55,8 @@ export class ObsAdapter {
   private readonly lastMedia = new Map<string, LastMedia>();
   private readonly failedInputs = new Set<string>();
   private running = false;
+  /** The last Program scene state dispatched, so a graph reload that changes nothing is a no-op. */
+  private lastProgram: { scene: string; deckOnProgram: boolean } | null = null;
 
   constructor(private readonly deps: ObsAdapterDeps) {}
 
@@ -68,7 +70,13 @@ export class ObsAdapter {
 
   async start(): Promise<void> {
     this.running = true;
-    await this.sync();
+    try {
+      await this.sync();
+    } catch (err) {
+      // A failed start must not leave the adapter looking alive: clean up so a later resync is a no-op.
+      this.stop();
+      throw err;
+    }
     if (!this.running) return;
     this.attach();
     this.armPoll();
@@ -161,11 +169,28 @@ export class ObsAdapter {
   }
 
   private dispatchProgram(): void {
+    const next = this.programState();
+    if (next === null) return;
+    this.lastProgram = next;
+    this.deps.dispatch({ type: 'ProgramSceneChanged', scene: next.scene, deckOnProgram: next.deckOnProgram });
+  }
+
+  /** Re-dispatches Program only when the scene or its `deckOnProgram` result actually changed. */
+  private dispatchProgramIfChanged(): void {
+    const next = this.programState();
+    if (next === null) return;
+    if (this.lastProgram !== null && this.lastProgram.scene === next.scene && this.lastProgram.deckOnProgram === next.deckOnProgram) {
+      return;
+    }
+    this.dispatchProgram();
+  }
+
+  private programState(): { scene: string; deckOnProgram: boolean } | null {
     const scene = this.scene;
-    if (scene === null) return;
+    if (scene === null) return null;
     const src = this.deps.deckSourceName();
     const deckOnProgram = src !== null && visibleInputs(this.sceneGraph, scene).has(src);
-    this.deps.dispatch({ type: 'ProgramSceneChanged', scene, deckOnProgram });
+    return { scene, deckOnProgram };
   }
 
   private attach(): void {
@@ -242,7 +267,7 @@ export class ObsAdapter {
     }
     if (!this.running) return;
     this.sceneGraph = graph;
-    this.dispatchProgram();
+    this.dispatchProgramIfChanged();
   }
 
   private armPoll(): void {

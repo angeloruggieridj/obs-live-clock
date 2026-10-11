@@ -12,7 +12,10 @@ async function main(): Promise<void> {
   const release = await acquireLock(paths.lock, process.pid, olcInstanceAlive(paths, paths.lock));
   try {
     const settings = await loadSettings(paths.settings, (err) =>
-      console.warn('[obs-live-clock] invalid settings; using defaults:', err),
+      console.warn(
+        '[obs-live-clock] invalid settings; using defaults:',
+        err instanceof Error ? err.message : String(err),
+      ),
     );
     const { app, instanceId } = await buildServer({
       dataDir: paths.root,

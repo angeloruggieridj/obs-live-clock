@@ -6,10 +6,6 @@ Punti noti e rimandati, emersi dalle revisioni. Per ogni voce: dove intervenire 
 
 **Motore live**
 
-- **Disconnessione che inizia durante un servizio fuori ordine.**
-  - *Dove:* `server/src/engine/reducer.ts`, nel ciclo di stima.
-  - *Cosa succede:* il ciclo marca come provvisori anche lo slot di ritorno e gli slot già osservati, e lo slot di studio interrotto può restare `onair`. Il monitor mostra "STIMATO" fino al servizio o break successivo.
-  - *Correzione proposta:* partire da `position(s)` invece che da `s.cursor`.
 - **Slot provvisorio rimosso dalla playlist.** Conserva il flag `provisional` (`reconcileDropped`).
 - **Stacco breve durante un servizio** con OBS reale: verificare la ripresa del clip.
 - **Pausa della REC nel live-to-tape.** Congela anche il conto alla rovescia di un servizio che in realtà sta andando (`snapshot.ts`).
@@ -17,18 +13,30 @@ Punti noti e rimandati, emersi dalle revisioni. Per ogni voce: dove intervenire 
 
 **Persistenza**
 
-Da sistemare prima degli eventi `DeckPlayback` a circa 1 Hz.
-
-- **Debounce dello snapshot.** Raggruppare i salvataggi ravvicinati, come previsto da TECH-DESIGN §5.7.
-- **Log JSONL.** Ogni append rilegge l'intero file. Tenere in memoria se il file termina con un ritorno a capo.
 - **Retry su Windows** per `rename` in caso di `EPERM`/`EBUSY`/`EACCES`, nello stile di graceful-fs.
 - **Snapshot con `cursor` fuori range** e validazione completa di `LiveState` alla ripresa (schema zod). Oggi c'è solo la proiezione di prova.
 
 **Sicurezza (DT-5)**
 
-- **Token segreto su Windows.** Restringere l'ACL all'utente corrente.
 - **Scrittura atomica del token segreto.**
-- **Endpoint credenziali interno.**
+
+**Residui (revisione di fine Piano 3)**
+
+- **`compareVersions` con parti non numeriche.** La funzione confronta solo le parti numeriche: decidere come trattare suffissi tipo `1.4.0-beta` (`server/src/obs/version.ts`).
+- **Polling legacy: `DeckPlayback` deduplicato da `GetStatus`.** In modalità legacy il poll potrebbe riportare lo stato di riproduzione deduplicato, non solo gli item (`deck-adapter.ts`).
+- **Re-read sovrapposti.** Due reload debounced possono sovrapporsi: serve un contatore di generazione per scartare il più vecchio (`obs-adapter.ts`, `deck-adapter.ts`).
+- **`fetchItems` tronca quando manca `count`.** Se il vendor non riporta `count`, la lettura si ferma alla prima pagina.
+- **`GetStatus` con `ok:false`.** Oggi non viene gestito: un `ok:false` va trattato come vendor non disponibile o errore.
+- **Eventi persi durante la sincronizzazione iniziale.** I listener vengono agganciati dopo il sync: agganciarli prima e bufferizzare gli eventi.
+- **Dispatch della deck prima di `SourceRestored`.** Alla riconnessione la deck può dispatchare prima che il runtime sappia che OBS è tornato.
+- **Capability della deck letta come `absent` prima che `GetStatus` risponda.** Aggiungere uno stato `unknown` invece di assumere l'assenza.
+- **Log solo dei cambi di stato del loop di retry** (`connection.ts`).
+- **`icacls`:** usare un percorso assoluto, `USERDOMAIN\USERNAME` e un timeout.
+- **Fedeltà del simulatore:** `Reidentify`, `RequestBatch`, `eventSubscriptions`, `rpcVersion` (`tools/obs-sim`).
+- **`media_input_unverified` in Check OBS.** Quando `GetInputList` fallisce, segnalare che i media input non sono stati verificati invece di saltarli in silenzio (`api/obs.ts`).
+- **Validazione host per IPv6.** L'allowlist confronta gli hostname: verificare il caso degli indirizzi IPv6.
+- **Slot di stacco chiuso a fine blocco stimata.** Rifinire la chiusura dello slot quando la fine del blocco è solo stimata (`engine/reducer.ts`).
+- **Skew dello snapshot sotto dispatch continuo.** L'accorpamento dei salvataggi può far divergere lo snapshot dallo stato più recente.
 
 ## Piano 4 — client web (monitor, dock, vista estesa)
 

@@ -181,6 +181,32 @@ describe('DeckAdapter', () => {
     await expect(h.deck.start()).rejects.toThrow('socket closed');
   });
 
+  it('publishes nothing on a GetItems ObsRequestError and delivers items on a later re-read', async () => {
+    const h = setup('1.4.0');
+    h.setGetItemsError(new ObsRequestError(500, 'GetItems failed'));
+    await h.deck.start();
+    // No empty DeckPlaylistChanged: that would make the engine drop every pending media slot.
+    expect(h.dispatched.filter((d) => d.type === 'DeckPlaylistChanged')).toEqual([]);
+    expect(h.deck.items()).toBeNull();
+    expect(h.errors).toHaveLength(1);
+
+    // The failed read schedules a debounced re-read through the playlist-changed path.
+    h.setGetItemsError(null);
+    h.time.advance(150);
+    await flush();
+    await flush();
+    expect(h.dispatched.filter((d) => d.type === 'DeckPlaylistChanged')).toEqual([
+      {
+        type: 'DeckPlaylistChanged',
+        items: [
+          { index: 0, path: 'D:/media/servizio1.mp4', title: 'Servizio 1', durationMs: 185_000 },
+          { index: 1, path: 'D:/media/servizio2.mp4', title: 'Servizio 2', durationMs: -1 },
+        ],
+      },
+    ]);
+    expect(h.deck.items()).not.toBeNull();
+  });
+
   it('resync() re-delivers items after a refused dispatch', async () => {
     const h = setup('1.4.0');
     h.setAccept(false);
@@ -220,6 +246,21 @@ describe('DeckAdapter', () => {
     await flush();
     await flush();
     expect(h.dispatched.map((d) => d.type)).toEqual(['DeckPlaylistChanged']);
+    expect(h.deck.items()).not.toBeNull();
+  });
+
+  it('legacy poll delivers items after a GetItems ObsRequestError during start', async () => {
+    const h = setup('1.3.3');
+    h.setGetItemsError(new ObsRequestError(500, 'GetItems failed'));
+    await h.deck.start();
+    expect(h.dispatched.filter((d) => d.type === 'DeckPlaylistChanged')).toEqual([]);
+    expect(h.deck.items()).toBeNull();
+
+    h.setGetItemsError(null);
+    h.time.advance(2_000);
+    await flush();
+    await flush();
+    expect(h.dispatched.filter((d) => d.type === 'DeckPlaylistChanged')).toHaveLength(1);
     expect(h.deck.items()).not.toBeNull();
   });
 });
