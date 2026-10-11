@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const APP_DIR = 'obs-live-clock';
 
@@ -13,6 +14,12 @@ export function defaultDataDir(
   if (platform === 'win32') return join(env.APPDATA ?? join(home, 'AppData', 'Roaming'), APP_DIR);
   if (platform === 'darwin') return join(home, 'Library', 'Application Support', APP_DIR);
   return join(env.XDG_CONFIG_HOME ?? join(home, '.config'), APP_DIR);
+}
+
+/** Where the built web app lives: OLC_WEB_ROOT, else `<repo>/web/dist` relative to this module (dev layout). */
+export function defaultWebRoot(env: NodeJS.ProcessEnv = process.env, moduleUrl: string = import.meta.url): string {
+  if (env.OLC_WEB_ROOT) return env.OLC_WEB_ROOT;
+  return fileURLToPath(new URL('../../../web/dist', moduleUrl));
 }
 
 export interface DataPaths {

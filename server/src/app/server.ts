@@ -8,6 +8,7 @@ import { registerHostGuard } from '../api/host-guard';
 import { registerHttp } from '../api/http';
 import { registerInternal } from '../api/internal';
 import { registerObsRoutes } from '../api/obs';
+import { registerStatic } from '../api/static';
 import { registerWs } from '../api/ws';
 import { systemClock, systemScheduler, type Clock, type Scheduler } from '../clock/clock';
 import { createObsClient, type ObsClient } from '../obs/client';
@@ -42,6 +43,8 @@ export interface ServerOptions {
   platform?: NodeJS.Platform;
   /** ACL restriction runner passed to `ensureSecretToken`, injectable so tests never shell out to `icacls`. */
   restrictAcl?: (path: string) => Promise<void>;
+  /** Built web app directory; null (default) answers 503 on the pages. */
+  webRoot?: string | null;
 }
 
 export interface BuiltServer {
@@ -123,6 +126,7 @@ export async function buildServer(opts: ServerOptions): Promise<BuiltServer> {
   registerInternal(app, { token: secret.token, obs });
   registerObsRoutes(app, { obs, episodes, clock, scheduler });
   registerWs(app, { runtime, clock, version, instanceId, heartbeatMs: opts.heartbeatMs ?? 1_000 });
+  registerStatic(app, { root: opts.webRoot ?? null });
   app.addHook('onClose', async () => {
     try {
       await withTimeout(obs.stop(), OBS_STOP_TIMEOUT_MS, clock, scheduler);

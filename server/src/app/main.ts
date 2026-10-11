@@ -2,7 +2,7 @@
 import { mkdir } from 'node:fs/promises';
 import { writeJsonAtomic } from '../persistence/json-file';
 import { acquireLock, olcInstanceAlive } from './instance-lock';
-import { dataPaths, defaultDataDir } from './paths';
+import { dataPaths, defaultDataDir, defaultWebRoot } from './paths';
 import { buildServer } from './server';
 import { listenHost, loadSettings } from './settings';
 
@@ -22,6 +22,7 @@ async function main(): Promise<void> {
       logger: true,
       lanAccess: settings.lanAccess,
       obsCredentials: settings.obs,
+      webRoot: defaultWebRoot(),
     });
     await app.listen({ port: settings.port, host: listenHost(settings) });
     await writeJsonAtomic(paths.runtime, { port: settings.port, pid: process.pid, instanceId });

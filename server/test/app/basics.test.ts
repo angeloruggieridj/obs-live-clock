@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import { readFile, stat, utimes, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { InstanceLockedError, acquireLock, olcInstanceAlive } from '../../src/app/instance-lock';
-import { dataPaths, defaultDataDir } from '../../src/app/paths';
+import { dataPaths, defaultDataDir, defaultWebRoot } from '../../src/app/paths';
 import { ensureSecretToken } from '../../src/app/secret';
 import { Settings, listenHost, loadSettings } from '../../src/app/settings';
 import { writeJsonAtomic } from '../../src/persistence/json-file';
@@ -28,6 +30,13 @@ describe('defaultDataDir', () => {
     expect(p.snapshot).toBe(join('/r', 'live', 'snapshot.json'));
     expect(p.journal('ep-1')).toBe(join('/r', 'live', 'ep-1.log.jsonl'));
     expect(p.formats).toBe(join('/r', 'formats'));
+  });
+
+  it('resolves the web root next to the repository unless OLC_WEB_ROOT is set', () => {
+    const base = join(tmpdir(), 'olc-repo');
+    const moduleUrl = pathToFileURL(join(base, 'server', 'src', 'app', 'paths.ts')).href;
+    expect(defaultWebRoot({}, moduleUrl)).toBe(join(base, 'web', 'dist'));
+    expect(defaultWebRoot({ OLC_WEB_ROOT: '/srv/olc-web' }, moduleUrl)).toBe('/srv/olc-web');
   });
 });
 
