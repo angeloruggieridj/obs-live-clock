@@ -10,7 +10,7 @@ import { ConfirmButton } from './ConfirmButton';
 type Run = (command: ClientCommand) => Promise<boolean>;
 
 /** SPEC §8 warnings, then the open non-blocking decisions (default already applied, changeable afterwards). */
-export function Alerts({ view, obs, run }: { view: ControlView; obs: ObsStatusLite | null; run: Run }) {
+export function Alerts({ view, obs, run, disabled = false }: { view: ControlView; obs: ObsStatusLite | null; run: Run; disabled?: boolean }) {
   const { t, timeZone } = useLive();
   const items: Array<{ key: string; text: string }> = [];
   if (obs?.connection === 'auth_failed') items.push({ key: 'auth', text: t('obsAuthFailed') });
@@ -32,13 +32,13 @@ export function Alerts({ view, obs, run }: { view: ControlView; obs: ObsStatusLi
         </div>
       ))}
       {open.map((d) => (
-        <Decision key={d.id} decision={d} run={run} />
+        <Decision key={d.id} decision={d} run={run} disabled={disabled} />
       ))}
     </section>
   );
 }
 
-function Decision({ decision, run }: { decision: ControlDecision; run: Run }) {
+function Decision({ decision, run, disabled }: { decision: ControlDecision; run: Run; disabled: boolean }) {
   const { t, timeZone } = useLive();
   const time = wallText(decision.atWall, timeZone);
   return (
@@ -50,9 +50,9 @@ function Decision({ decision, run }: { decision: ControlDecision; run: Run }) {
           const pressed = decision.choice === choice;
           const send = () => void run({ name: 'resolve_decision', id: decision.id, choice });
           return choice === 'end' ? (
-            <ConfirmButton key={choice} label={label} onConfirm={send} danger pressed={pressed} />
+            <ConfirmButton key={choice} label={label} onConfirm={send} disabled={disabled} danger pressed={pressed} />
           ) : (
-            <button key={choice} type="button" aria-pressed={pressed} onClick={send}>
+            <button key={choice} type="button" aria-pressed={pressed} disabled={disabled} onClick={send}>
               {label}
             </button>
           );

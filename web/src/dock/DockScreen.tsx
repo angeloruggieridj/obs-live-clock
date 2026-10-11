@@ -20,6 +20,8 @@ export function DockScreen({ api = defaultApi, search = typeof window === 'undef
   const obs = useObsStatus(api);
   const view = snap.view;
   const ready = snap.hasView && snap.synced;
+  // Commands are only safe on fresh data: while the snapshot is stale (or not ready) every button is disabled.
+  const commandsDisabled = snap.stale || !ready;
   return (
     <div className="dock">
       {ready && view === null ? (
@@ -30,13 +32,13 @@ export function DockScreen({ api = defaultApi, search = typeof window === 'undef
       {ready && view !== null ? (
         <>
           <StatusPanel view={view} />
-          <Alerts view={view} obs={obs} run={run} />
+          <Alerts view={view} obs={obs} run={run} disabled={commandsDisabled} />
         </>
       ) : null}
       {ready ? (
         <>
-          <MessagePanel view={view} run={run} />
-          <EmergencyPanel view={view} run={run} />
+          <MessagePanel view={view} run={run} disabled={commandsDisabled} />
+          <EmergencyPanel view={view} run={run} disabled={commandsDisabled} />
         </>
       ) : null}
       <CommandFeedback feedback={feedback} />

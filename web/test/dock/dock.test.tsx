@@ -4,12 +4,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ClientSnapshot } from '../../src/core/ws-client';
 import { CommandError } from '../../src/core/ws-client';
 import type { ApiClient } from '../../src/core/http';
-import type { ControlView } from '../../src/core/views';
+import type { Anchor, ControlView } from '../../src/core/views';
 import { DockScreen } from '../../src/dock/DockScreen';
 import { fakeApi } from '../support/api';
 import { renderLive } from '../support/render';
 import { StaticStore, snapshotOf } from '../support/store';
-import { WALL, controlView, mediaView, preshowView, studioView } from '../support/views';
+import { WALL, controlView, endedView, mediaView, preshowView, studioView } from '../support/views';
+
+const cd = (endsAt: number): Anchor => ({ kind: 'countdown', endsAt, source: 'measured' });
 
 afterEach(() => {
   vi.useRealTimers();
@@ -90,6 +92,32 @@ describe('<DockScreen> status and alerts', () => {
     expect(d.store.commands).toHaveLength(1); // armed, not sent
     fireEvent.click(d.button('Fine programma'));
     expect(d.store.commands[1]).toEqual({ name: 'resolve_decision', id: 1, choice: 'end' });
+  });
+
+  it('resets the status tally to none when a warn/over studio becomes ended', async () => {
+    const d = await dock(controlView({ presenter: studioView({ block: { index: 2, name: 'Secondo blocco', anchor: cd(WALL + 61_000) } }) }));
+    const status = () => d.container.querySelector<HTMLElement>('.status')!;
+    d.advance(0);
+    expect(status().dataset.tally).toBe('none');
+    d.advance(1_000);
+    expect(status().dataset.tally).toBe('warn');
+    d.advance(60_000);
+    expect(status().dataset.tally).toBe('over');
+    d.update({ view: controlView({ presenter: endedView() }) });
+    expect(d.text('.badge-phase')).toBe('FINE');
+    expect(status().dataset.tally).toBe('none');
+  });
+
+  it('stale: RICONNESSIONE…, the counter freezes and dims, then "—" after 10 s', async () => {
+    const d = await dock(controlView(), { stale: true, staleSince: WALL });
+    expect(screen.getByRole('alert').textContent).toBe('RICONNESSIONE…');
+    const counter = () => d.container.querySelector<HTMLElement>('.status-counter')!;
+    expect(counter().textContent).toBe('8:42');
+    d.advance(3_000);
+    expect(counter().textContent).toBe('8:42');
+    expect(counter().dataset.stale).toBe('true');
+    d.advance(8_000);
+    expect(counter().textContent).toBe('—');
   });
 });
 
@@ -206,6 +234,37 @@ describe('<DockScreen> emergency', () => {
     });
     expect(d.text('.cmd-feedback')).toBe('Comando non riuscito: no_episode');
   });
+
+  it('clears the previous feedback as soon as the next command succeeds', async () => {
+    vi.useFakeTimers();
+    const d = await dock();
+    d.store.reply = async () => ({ changed: false });
+    fireEvent.click(d.button('NEXT')); // arm (a render must happen between the two clicks)
+    await act(async () => {
+      fireEvent.click(d.button('NEXT'));
+    });
+    expect(d.text('.cmd-feedback')).toBe('Nessun effetto');
+    d.store.reply = async () => ({ changed: true });
+    fireEvent.click(d.button('PREV'));
+    await act(async () => {
+      fireEvent.click(d.button('PREV'));
+    });
+    expect(d.text('.cmd-feedback')).toBe('');
+    expect(d.store.commands).toEqual([{ name: 'next' }, { name: 'prev' }]);
+  });
+
+  it('disables every command while the snapshot is stale, and re-enables them when fresh', async () => {
+    const view = controlView({
+      presenter: studioView({ message: { text: 'STRINGI' } }),
+      decisions: [{ id: 1, kind: 'all_outputs_stopped', atWall: WALL, defaultChoice: 'interruption', choice: 'interruption', confirmed: false }],
+    });
+    const names = ['PREV', 'NEXT', '−0:30', '+0:30', 'END PROGRAM', 'MANUALE', 'CLEAR', '1 · STRINGI', '2 · GUARDA CAM 2', 'Interruzione', 'Fine programma'];
+    const stale = await dock(view, { stale: true, staleSince: WALL });
+    for (const name of names) expect(stale.button(name).disabled, name).toBe(true);
+    stale.unmount();
+    const fresh = await dock(view);
+    for (const name of names) expect(fresh.button(name).disabled, name).toBe(false);
+  });
 });
 
 describe('<DockScreen> without a show', () => {
@@ -214,6 +273,12 @@ describe('<DockScreen> without a show', () => {
     expect(d.text('.no-episode')).toBe('NESSUNA PUNTATA CARICATA');
     expect(d.texts('.preset-grid button')).toEqual([]);
     for (const name of ['START PROGRAM', 'PREV', 'NEXT', 'END PROGRAM', 'MANUALE', 'CLEAR']) expect(d.button(name).disabled, name).toBe(true);
+  });
+
+  it('shows an em dash instead of inventing a 0:30 step when no episode is loaded', async () => {
+    const d = await dock(null);
+    expect(d.texts('.emergency-grid button')).toEqual(['START PROGRAM', 'PREV', 'NEXT', '−—', '+—', 'MANUALE', 'END PROGRAM']);
+    for (const name of ['−—', '+—']) expect(d.button(name).disabled, name).toBe(true);
   });
 
   it('shows only CONNESSIONE… before the first view', async () => {

@@ -24,8 +24,16 @@ export function useCommand(): { run: (command: ClientCommand) => Promise<boolean
     if (timer.current !== null) clearTimeout(timer.current);
     timer.current = setTimeout(() => setFeedback({ kind: 'idle' }), FEEDBACK_MS);
   }, []);
+  const clear = useCallback(() => {
+    if (timer.current !== null) {
+      clearTimeout(timer.current);
+      timer.current = null;
+    }
+    setFeedback({ kind: 'idle' });
+  }, []);
   const run = useCallback(
     async (command: ClientCommand): Promise<boolean> => {
+      clear(); // a new command removes the previous feedback, so no stale "Nessun effetto" sits next to it
       try {
         const { changed } = await store.sendCommand(command);
         if (!changed) show({ kind: 'noEffect' });
@@ -35,7 +43,7 @@ export function useCommand(): { run: (command: ClientCommand) => Promise<boolean
         return false;
       }
     },
-    [store, show],
+    [store, show, clear],
   );
   return { run, feedback };
 }

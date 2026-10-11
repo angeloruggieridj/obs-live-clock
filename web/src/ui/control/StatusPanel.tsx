@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-import { useRef } from 'react';
+import { useLayoutEffect, useRef } from 'react';
 import type { AnchorFrame } from '../../core/anchor';
 import type { MessageKey, Translate } from '../../core/i18n';
 import { durationText, signedText, wallText } from '../../core/time-format';
@@ -44,6 +44,12 @@ export function StatusPanel({ view }: { view: ControlView }) {
   const anchor = mainAnchor(p, mode);
   const tally = (frame: AnchorFrame) => mainTally(p, mode, frame.ticks);
   const live = p.phase === 'live';
+  // React owns data-tally: the frame loop writes it imperatively through AnchoredTime, so a mode with no
+  // main anchor (ended / noepisode) must reset what the loop left behind on the way in (same as the presenter).
+  useLayoutEffect(() => {
+    const el = panelRef.current;
+    if (el !== null && anchor === null) el.dataset.tally = 'none';
+  }, [mode, anchor]);
   return (
     <section className="panel status" ref={panelRef} data-tally="none">
       <div className="status-badges">
