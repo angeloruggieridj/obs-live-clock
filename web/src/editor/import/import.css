@@ -1,0 +1,24 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+.imp { display: flex; flex-direction: column; gap: 8px; }
+.imp-title { margin: 0; font-size: 1rem; }
+.imp-status { min-height: 1.2em; margin: 0; color: var(--fg-off); }
+.imp-source { display: flex; flex-direction: column; gap: 4px; }
+.imp-source p { margin: 0; color: var(--fg-off); }
+.imp-file input { font: inherit; color: var(--fg); }
+.imp-preview { display: flex; flex-direction: column; gap: 4px; }
+.imp-preview p { margin: 0; }
+.imp-row {
+  display: flex; align-items: center; gap: 8px; padding: 2px 0; min-width: 0;
+  border-bottom: 1px solid var(--tile-border);
+}
+.imp-row .imp-path { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; color: var(--fg-off); }
+.imp-origin {
+  flex: none; padding: 0 6px; border: 1px solid var(--tile-border); border-radius: 4px;
+  font-size: 0.75rem; letter-spacing: 0.02em;
+}
+.imp-where { display: flex; flex-direction: column; gap: 4px; }
+.imp-where p { margin: 0; }
+.imp-radio { display: flex; align-items: center; gap: 6px; }
+.imp-target { display: flex; align-items: center; gap: 6px; }
+.imp-target select { font: inherit; }
+.is-warn { color: var(--amber); }
