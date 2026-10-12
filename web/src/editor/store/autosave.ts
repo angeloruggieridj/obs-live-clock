@@ -47,6 +47,8 @@ export class Autosave<T> {
   private inflight: Promise<void> | null = null;
   private firstDirtyAt: number | null = null;
   private failures = 0;
+  /** Once disposed the autosave is inert: no timer, no save, no listener call may start new work. */
+  private disposed = false;
   private readonly listeners = new Set<() => void>();
   private readonly o: Required<AutosaveOptions>;
   private readonly unsubscribe: () => void;
@@ -72,17 +74,24 @@ export class Autosave<T> {
   /** Declares the current document as already persisted (after load, or after a "take theirs" reload). */
   markSaved(): void {
     this.cancel();
-    this.savedRev = this.store.getSnapshot().rev;
+    this.raiseSaved(this.store.getSnapshot().rev);
     this.failures = 0;
     this.firstDirtyAt = null;
     this.set({ kind: 'clean' });
   }
 
-  /** Saves now (cancelling the debounce); resolves when no unsaved change is left or saving cannot proceed. */
+  /**
+   * Saves now (cancelling the debounce); resolves when no unsaved change is left or saving cannot proceed.
+   *
+   * When the state is `error`, `invalid` or `locked` it returns WITHOUT saving: callers that need the document
+   * persisted must inspect `getState()` first (and, for an `error`, call `retryNow()`).
+   */
   async flush(): Promise<void> {
     this.cancel();
     for (;;) {
+      if (this.disposed) return;
       if (this.inflight !== null) await this.inflight;
+      if (this.disposed) return;
       const s = this.state.kind;
       if (this.store.getSnapshot().rev === this.savedRev || s === 'locked' || s === 'error' || s === 'invalid') return;
       await this.run();
@@ -91,21 +100,27 @@ export class Autosave<T> {
 
   /** "Retry now" button. After a failure it runs one attempt immediately. */
   async retryNow(): Promise<void> {
-    if (this.state.kind === 'locked') return;
+    if (this.disposed || this.state.kind === 'locked') return;
     this.cancel();
     if (this.inflight !== null) await this.inflight;
+    if (this.disposed) return;
     await this.run();
   }
 
+  /** Permanently stops the autosave: cancels the pending timer, detaches from the store and ignores late saves. */
   dispose(): void {
+    this.disposed = true;
     this.cancel();
     this.unsubscribe();
   }
 
   private onStoreChange(): void {
-    if (this.state.kind === 'locked') return;
+    if (this.disposed || this.state.kind === 'locked') return;
     const rev = this.store.getSnapshot().rev;
     if (rev === this.savedRev) return;
+    // While in `error` the backoff timer owns the retry cadence: an edit only bumps the revision, it must not
+    // reset firstDirtyAt and shortcut the delay to zero (which would defeat the backoff).
+    if (this.state.kind === 'error') return;
     if (this.state.kind === 'clean' || this.state.kind === 'invalid') {
       this.firstDirtyAt = this.timers.now();
       this.set({ kind: 'dirty' });
@@ -117,11 +132,16 @@ export class Autosave<T> {
   }
 
   private schedule(ms: number): void {
+    if (this.disposed) return;
     this.cancel();
     this.cancelTimer = this.timers.set(() => {
       this.cancelTimer = null;
       void this.run();
     }, ms);
+  }
+
+  private raiseSaved(rev: number): void {
+    if (rev > this.savedRev) this.savedRev = rev;
   }
 
   private cancel(): void {
@@ -130,6 +150,7 @@ export class Autosave<T> {
   }
 
   private run(): Promise<void> {
+    if (this.disposed) return Promise.resolve();
     if (this.inflight !== null) return this.inflight;
     const { doc, rev } = this.store.getSnapshot();
     if (rev === this.savedRev) return Promise.resolve();
@@ -137,7 +158,8 @@ export class Autosave<T> {
     const attempt = (async () => {
       try {
         await this.save(doc);
-        this.savedRev = rev;
+        if (this.disposed) return;
+        this.raiseSaved(rev);
         this.failures = 0;
         this.firstDirtyAt = null;
         if (this.store.getSnapshot().rev === this.savedRev) this.set({ kind: 'clean' });
@@ -147,6 +169,7 @@ export class Autosave<T> {
           this.schedule(this.o.debounceMs);
         }
       } catch (err) {
+        if (this.disposed) return;
         const status = err instanceof SaveError ? err.status : 0;
         const code = err instanceof SaveError ? err.code : 'network';
         if (status === 409 && code === 'episode_live') {

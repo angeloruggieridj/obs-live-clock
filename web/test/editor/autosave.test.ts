@@ -10,12 +10,17 @@ function setup() {
   const f = fakeTimers();
   const store = new DocumentStore(0);
   const saved: number[] = [];
-  const ctl = { fail: null as Error | null, hold: null as null | { release: () => void } };
+  const ctl = {
+    fail: null as Error | null,
+    hold: null as null | { release: () => void },
+    calls: 0,
+  };
   const save = async (doc: number) => {
-    if (ctl.fail !== null) throw ctl.fail;
+    ctl.calls += 1;
     if (ctl.hold !== null) {
       await new Promise<void>((resolve) => (ctl.hold = { release: resolve }));
     }
+    if (ctl.fail !== null) throw ctl.fail;
     saved.push(doc);
   };
   const autosave = new Autosave(store, save, f.timers);
@@ -163,5 +168,73 @@ describe('Autosave', () => {
     store.replace(7);
     autosave.markSaved();
     expect(autosave.getState().kind).toBe('clean');
+  });
+
+  it('dispose() during a held failing save stops every retry and leaves no timers', async () => {
+    const { f, store, ctl, autosave } = setup();
+    ctl.fail = new SaveError(500, 'internal');
+    ctl.hold = { release: () => {} };
+    store.edit(inc);
+    await f.advance(900); // the first save fires and is held
+    expect(autosave.getState().kind).toBe('saving');
+    const callsBefore = ctl.calls;
+    autosave.dispose();
+    ctl.hold.release();
+    ctl.hold = null;
+    await f.advance(60_000); // the held save now fails: no backoff may re-arm
+    expect(ctl.calls).toBe(callsBefore);
+    expect(f.pending()).toBe(0);
+  });
+
+  it('dispose() during a held successful save with a newer revision stops rescheduling', async () => {
+    const { f, store, ctl, autosave } = setup();
+    ctl.hold = { release: () => {} };
+    store.edit(inc);
+    await f.advance(900); // the first save fires and is held
+    expect(autosave.getState().kind).toBe('saving');
+    store.edit(inc); // a newer revision while the older save is in flight
+    const callsBefore = ctl.calls;
+    autosave.dispose();
+    ctl.hold.release();
+    ctl.hold = null;
+    await f.advance(60_000); // the older save succeeds: no re-arm may happen
+    expect(ctl.calls).toBe(callsBefore);
+    expect(f.pending()).toBe(0);
+  });
+
+  it('markSaved() is never lowered by an older in-flight save completing', async () => {
+    const { f, store, ctl, autosave } = setup();
+    ctl.hold = { release: () => {} };
+    store.edit(inc); // revision 1, in flight
+    await f.advance(900);
+    expect(autosave.getState().kind).toBe('saving');
+    store.replace(9); // the director loads a different document (revision 2)
+    autosave.markSaved(); // ...declared already persisted
+    expect(autosave.getState().kind).toBe('clean');
+    ctl.hold.release(); // the stale revision-1 save completes
+    ctl.hold = null;
+    await f.advance(0);
+    expect(autosave.getState().kind).toBe('clean'); // savedRev stayed at revision 2
+  });
+
+  it('edits in the error state do not shortcut the backoff', async () => {
+    const { f, store, ctl, autosave } = setup();
+    ctl.fail = new SaveError(500, 'internal');
+    ctl.hold = { release: () => {} };
+    store.edit(inc);
+    await f.advance(5_100); // the first save is held well past maxWaitMs, so firstDirtyAt stays stale
+    expect(autosave.getState().kind).toBe('saving');
+    ctl.hold.release();
+    ctl.hold = null;
+    await f.advance(0);
+    expect(autosave.getState()).toMatchObject({ kind: 'error', attempt: 1 });
+    const callsBefore = ctl.calls;
+    for (let i = 0; i < 10; i++) {
+      store.edit(inc);
+      await f.advance(10); // 100 ms total, well inside the 1000 ms backoff
+    }
+    expect(ctl.calls).toBe(callsBefore); // no attempt while the backoff is pending
+    await f.advance(1_000);
+    expect(ctl.calls).toBe(callsBefore + 1); // exactly one attempt at the backoff boundary
   });
 });

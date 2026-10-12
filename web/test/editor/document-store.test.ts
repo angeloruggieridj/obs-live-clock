@@ -117,4 +117,17 @@ describe('DocumentStore', () => {
     s.edit(inc());
     expect(calls).toBe(1);
   });
+
+  it('keeps running the other listeners when one throws', () => {
+    const s = new DocumentStore(0);
+    const seen: string[] = [];
+    s.subscribe(() => seen.push('a'));
+    s.subscribe(() => {
+      seen.push('b');
+      throw new Error('listener b failed');
+    });
+    s.subscribe(() => seen.push('c'));
+    expect(() => s.edit(inc())).not.toThrow();
+    expect(seen).toEqual(['a', 'b', 'c']);
+  });
 });

@@ -150,6 +150,12 @@ export class DocumentStore<T> {
 
   private emit(): void {
     this.snap = this.build();
-    for (const l of [...this.listeners]) l();
+    for (const l of [...this.listeners]) {
+      try {
+        l();
+      } catch {
+        // A misbehaving listener must never stop the others, nor the edit that triggered the notification.
+      }
+    }
   }
 }
