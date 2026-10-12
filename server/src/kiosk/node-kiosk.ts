@@ -22,7 +22,7 @@ export function nodeSpawn(command: string, args: string[]): KioskProcess {
     if (callback !== null) callback(info);
     else early = info;
   };
-  child.once('error', (err) => finish({ code: null, error: err.message }));
+  child.on('error', (err) => finish({ code: null, error: err.message }));
   child.once('exit', (code) => finish({ code }));
   return {
     get pid() {

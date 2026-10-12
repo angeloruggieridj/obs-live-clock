@@ -81,12 +81,28 @@ const CANDIDATES: Candidate[] = [
 ];
 
 /**
+ * Trim spaces and a matching pair of surrounding quotes from a user-supplied path. Windows Explorer's "Copy as
+ * path" and console paste both wrap the path in double quotes; single quotes are accepted too.
+ */
+function trimQuotes(value: string): string {
+  const trimmed = value.trim();
+  for (const quote of ['"', "'"]) {
+    if (trimmed.length >= 2 && trimmed.startsWith(quote) && trimmed.endsWith(quote)) {
+      return trimmed.slice(1, -1);
+    }
+  }
+  return trimmed;
+}
+
+/**
  * The first installed Chromium-family browser, or null. `override` (settings.kiosk.browserPath) wins and is never
- * silently replaced: when it does not exist the answer is null, so the caller can say "browser not found".
+ * silently replaced: when it does not exist the answer is null, so the caller can say "browser not found". A path a
+ * user pasted from Explorer or a command line may carry surrounding spaces and quotes; those are trimmed first.
  */
 export async function detectBrowser(deps: DetectDeps, override?: string): Promise<DetectedBrowser | null> {
   if (override !== undefined && override !== '') {
-    return (await deps.exists(override)) ? { kind: 'custom', path: override } : null;
+    const path = trimQuotes(override);
+    return (await deps.exists(path)) ? { kind: 'custom', path } : null;
   }
   for (const c of CANDIDATES) {
     if (deps.platform === 'win32' && c.exe !== undefined) {

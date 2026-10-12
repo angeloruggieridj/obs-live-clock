@@ -34,11 +34,22 @@ export class RestartPolicy {
 
   onExit(now: number, info: { livedMs: number; code: number | null }): ExitDecision {
     if (info.code === 0 && info.livedMs < this.config.handoffMs) return { action: 'handoff' };
-    while (this.restartTimes.length > 0 && now - this.restartTimes[0]! > this.config.windowMs) this.restartTimes.shift();
+    this.prune(now);
     const index = this.restartTimes.length;
     if (index >= this.config.delaysMs.length) return { action: 'suspend', restarts: index };
     this.restartTimes.push(now);
     return { action: 'restart', delayMs: this.config.delaysMs[index]! };
+  }
+
+  /**
+   * A restart the controller decides itself (the monitor moved). It counts against the same limit as a crash, so a
+   * flapping display cannot reopen the window forever; false means the limit is reached.
+   */
+  allowRestart(now: number): boolean {
+    this.prune(now);
+    if (this.restartTimes.length >= this.config.delaysMs.length) return false;
+    this.restartTimes.push(now);
+    return true;
   }
 
   /** Operator pressed Start/Restart: a fresh start. */
@@ -48,5 +59,9 @@ export class RestartPolicy {
 
   get restarts(): number {
     return this.restartTimes.length;
+  }
+
+  private prune(now: number): void {
+    while (this.restartTimes.length > 0 && now - this.restartTimes[0]! > this.config.windowMs) this.restartTimes.shift();
   }
 }
