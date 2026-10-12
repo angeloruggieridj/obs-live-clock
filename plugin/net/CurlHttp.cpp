@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "CurlHttp.hpp"
 
+#include "Loopback.hpp"
+
 #include <curl/curl.h>
 
 #include <algorithm>
@@ -25,10 +27,6 @@ struct HandleDeleter {
 struct ListDeleter {
     void operator()(curl_slist* l) const { curl_slist_free_all(l); }
 };
-
-bool isLoopback(const std::string& url) {
-    return url.rfind("http://127.0.0.1", 0) == 0 || url.rfind("http://localhost", 0) == 0 || url.rfind("http://[::1]", 0) == 0;
-}
 }  // namespace
 
 HttpResponse CurlHttp::perform(const HttpRequest& request) {
@@ -49,15 +47,20 @@ HttpResponse CurlHttp::perform(const HttpRequest& request) {
         headers.reset(next);
     }
     const long timeout = (std::max)(100, request.timeoutMs);
-    curl_easy_setopt(easy.get(), CURLOPT_URL, request.url.c_str());
+    // The URL, the timeouts and the headers decide where the request goes, how long it may take and what it carries:
+    // a rejected option must fail the request, never be silently ignored. The error text is fixed so it leaks nothing.
+    if (curl_easy_setopt(easy.get(), CURLOPT_URL, request.url.c_str()) != CURLE_OK ||
+        curl_easy_setopt(easy.get(), CURLOPT_TIMEOUT_MS, timeout) != CURLE_OK ||
+        curl_easy_setopt(easy.get(), CURLOPT_CONNECTTIMEOUT_MS, (std::min<long>)(timeout, 1000L)) != CURLE_OK ||
+        curl_easy_setopt(easy.get(), CURLOPT_HTTPHEADER, headers.get()) != CURLE_OK) {
+        response.error = "curl_easy_setopt rejected an option";
+        return response;
+    }
     curl_easy_setopt(easy.get(), CURLOPT_NOSIGNAL, 1L);  // required when curl is used from non-main threads
-    curl_easy_setopt(easy.get(), CURLOPT_TIMEOUT_MS, timeout);
-    curl_easy_setopt(easy.get(), CURLOPT_CONNECTTIMEOUT_MS, (std::min<long>)(timeout, 1000L));
     curl_easy_setopt(easy.get(), CURLOPT_FOLLOWLOCATION, 0L);
-    curl_easy_setopt(easy.get(), CURLOPT_HTTPHEADER, headers.get());
     curl_easy_setopt(easy.get(), CURLOPT_WRITEFUNCTION, onBody);
     curl_easy_setopt(easy.get(), CURLOPT_WRITEDATA, &response.body);
-    if (isLoopback(request.url)) curl_easy_setopt(easy.get(), CURLOPT_NOPROXY, "*");
+    if (isLoopbackUrl(request.url)) curl_easy_setopt(easy.get(), CURLOPT_NOPROXY, "*");
     if (request.method == "POST") {
         curl_easy_setopt(easy.get(), CURLOPT_POST, 1L);
         curl_easy_setopt(easy.get(), CURLOPT_POSTFIELDS, request.body.c_str());

@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Builds the OBS development tree the plugin module needs (libobs + obs-frontend-api headers and import libraries,
-# OBS's own prebuilt dependencies and Qt) into $OLC_DEPS_DIR (default plugin/.deps, git-ignored). Same recipe as CI: it mirrors
-# the Windows job of Playlist Deck's build_project.yml. Takes 5 to 10 minutes the first time (downloads about 400 MB), nothing afterwards.
+# OBS's own prebuilt dependencies and Qt) into $OLC_DEPS_DIR (default plugin/.deps, git-ignored). Takes 5 to 10 minutes
+# the first time (downloads about 400 MB), nothing afterwards.
 #
 # VERIFIED on Windows 11 with OBS 32.2.2 (Git Bash, Visual Studio 18 Build Tools, paths with spaces included).
-# NOT verified on macOS or Linux: CI builds there (see .github/workflows/ci.yml); do not use this script on them.
+# Windows only: do not use this script on macOS or Linux.
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
-olc_is_windows || { echo "setup-obs-dev.sh supports Windows only; macOS and Linux are built by CI." >&2; exit 2; }
+olc_is_windows || { echo "setup-obs-dev.sh supports Windows only." >&2; exit 2; }
 
-OBS_VERSION="${OBS_VERSION:-32.2.2}"   # keep equal to OBS_VERSION in .github/workflows/ci.yml
+OBS_VERSION="${OBS_VERSION:-32.2.2}"   # the OBS release the plugin is built against
 deps_root="$OLC_DEPS_DIR"
 mkdir -p "$deps_root/dl"
 py="$(command -v python3 || command -v python)"
