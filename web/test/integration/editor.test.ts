@@ -241,6 +241,10 @@ describe('the editor against the real server and the OBS simulator', () => {
     await settled(a);
     b.apply(renameDoc('Da B'));
     await b.checkExternal();
+    // B has unsaved edits: it must be asked which copy to keep. B's own autosave debounce (30 ms) can fire while
+    // the external-change fetch is in flight; checkExternal() then yields to the save-time pre-write check, which
+    // raises the same conflict. Wait for the conflict itself instead of racing that network round trip.
+    await until('session B is asked about the foreign change', () => b.getSnapshot().conflict?.name === 'Da A bis', 5_000);
     expect(b.getSnapshot().conflict?.name).toBe('Da A bis'); // B has unsaved edits: it must choose
     expect(doc(b).name).toBe('Da B');
   }, 30_000);
