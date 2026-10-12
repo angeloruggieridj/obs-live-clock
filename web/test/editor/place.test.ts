@@ -98,6 +98,16 @@ describe('sequence', () => {
     const g = importEdit(planPlacement(f, [cand('big', 900_000)], { kind: 'sequence' })).apply(f);
     expect(validateRundown(g).some((i) => i.code === 'media_exceeds_block' && i.blockId === 'b3')).toBe(true);
   });
+  it('uses the stored duration, counting an unknown origin as zero even with a numeric duration', () => {
+    const f = soloFutsalFormat();
+    // b1 room 480 s (180 s media): the unknown-origin item stores 0, so the following known 100 s still fits in
+    // b1 instead of being pushed to b2 by the raw 400 s carried by the candidate.
+    const items = [cand('u', 400_000, { origin: 'unknown' }), cand('k', 100_000)];
+    const plan = planPlacement(f, items, { kind: 'sequence' });
+    expect(plan.adds.map((a) => [a.media.path, a.blockId])).toEqual([['u', 'b1'], ['k', 'b1']]);
+    expect(plan.adds[0]!.media).toMatchObject({ plannedDurationMs: 0, durationSource: 'unknown' });
+  });
+
   it('counts an unknown duration as zero for placement and reports it', () => {
     const f = soloFutsalFormat();
     const plan = planPlacement(f, [cand('u', -1)], { kind: 'sequence' });

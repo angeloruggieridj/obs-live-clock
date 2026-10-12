@@ -382,6 +382,60 @@ describe('external changes (another tab)', () => {
   });
 });
 
+describe('stale tab detected at save time (pre-write check)', () => {
+  it('writes nothing and shows the conflict when the server copy changed before the first poll', async () => {
+    const { api, time, session } = setup();
+    await session.open(FORMAT);
+    // Another tab (A) saved a change while this clean one (B) has not polled yet: the save must compare with
+    // the server BEFORE writing, not overwrite it.
+    api.formats.set('solo-futsal', { ...sampleFormat(), name: 'Da A' });
+    session.apply(renameDoc('Da B'));
+    await time.advance(900);
+    expect(session.getSnapshot().conflict?.name).toBe('Da A');
+    expect(api.count('putDoc')).toBe(0);
+    expect(api.formats.get('solo-futsal')!.name).toBe('Da A');
+    expect(session.autosave.getState().kind).not.toBe('clean');
+  });
+
+  it('keep mine then writes the local copy', async () => {
+    const { api, time, session } = setup();
+    await session.open(FORMAT);
+    api.formats.set('solo-futsal', { ...sampleFormat(), name: 'Da A' });
+    session.apply(renameDoc('Da B'));
+    await time.advance(900);
+    expect(session.getSnapshot().conflict?.name).toBe('Da A');
+    session.keepMine();
+    await time.advance(900);
+    expect(api.formats.get('solo-futsal')!.name).toBe('Da B');
+    expect(session.autosave.getState().kind).toBe('clean');
+  });
+
+  it('take theirs does not write', async () => {
+    const { api, time, session } = setup();
+    await session.open(FORMAT);
+    api.formats.set('solo-futsal', { ...sampleFormat(), name: 'Da A' });
+    session.apply(renameDoc('Da B'));
+    await time.advance(900);
+    expect(session.getSnapshot().conflict?.name).toBe('Da A');
+    session.takeTheirs();
+    await time.advance(900);
+    expect(session.store.getSnapshot().doc?.name).toBe('Da A');
+    expect(api.count('putDoc')).toBe(0);
+    expect(api.formats.get('solo-futsal')!.name).toBe('Da A');
+  });
+
+  it('proceeds with the write when the pre-write getDoc fails', async () => {
+    const { api, time, session } = setup();
+    await session.open(FORMAT);
+    api.failNext('getDoc', new TypeError('fetch failed'));
+    session.apply(renameDoc('Nuovo nome'));
+    await time.advance(900);
+    expect(api.formats.get('solo-futsal')!.name).toBe('Nuovo nome');
+    expect(session.getSnapshot().conflict).toBeNull();
+    expect(session.autosave.getState().kind).toBe('clean');
+  });
+});
+
 describe('stableStringify', () => {
   it('ignores key order', () => {
     expect(stableStringify({ a: 1, b: [{ d: 1, c: 2 }] })).toBe(stableStringify({ b: [{ c: 2, d: 1 }], a: 1 }));

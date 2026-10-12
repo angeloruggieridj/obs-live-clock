@@ -131,6 +131,21 @@ describe('save indicator (Review Focus 1)', () => {
     window.dispatchEvent(saved);
     expect(saved.defaultPrevented).toBe(false);
   });
+
+  it('asks the browser to confirm leaving while a conflict is pending', async () => {
+    const { open, session, api, advance } = boot();
+    await open(FORMAT);
+    act(() => void session.apply(renameDoc('Mia modifica')));
+    api.formats.set('solo-futsal', { ...sampleFormat(), name: 'Loro modifica' });
+    await advance(900); // the save sees the foreign change before writing: conflict set, nothing written
+    expect(session.getSnapshot().conflict).not.toBeNull();
+    expect(api.count('putDoc')).toBe(0);
+    // Even if the autosave momentarily looks clean, a pending conflict alone must warn before leaving.
+    session.autosave.markSaved();
+    const e = new Event('beforeunload', { cancelable: true });
+    window.dispatchEvent(e);
+    expect(e.defaultPrevented).toBe(true);
+  });
 });
 
 describe('banners', () => {

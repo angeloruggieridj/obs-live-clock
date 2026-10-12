@@ -82,6 +82,18 @@ export class EditorSession {
         // the document it captured (and a stale tab never overwrites the copy the conflict is showing).
         const target = docRef(doc);
         const token = this.openToken;
+        // Pre-write check: a stale tab that has not polled yet would otherwise overwrite a newer server copy. Compare
+        // the server copy against what we last confirmed BEFORE writing; a foreign change becomes a conflict. A failed
+        // read (the network is down) must not block the write: the normal save error/retry path handles that.
+        if (this.snap.conflict === null && this.lastSaved !== null) {
+          try {
+            const remote = await this.api.getDoc(target);
+            if (token !== this.openToken) return;
+            if (stableStringify(remote) !== stableStringify(this.lastSaved)) this.set({ conflict: remote });
+          } catch {
+            // getDoc failed (network): proceed with the write, exactly as if no check had run.
+          }
+        }
         if (this.snap.conflict !== null) {
           await this.holdForConflict();
           // The conflict was resolved (or the session moved on) while we waited: only keepMine() ends up here with

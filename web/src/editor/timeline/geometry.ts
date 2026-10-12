@@ -12,6 +12,7 @@ export function snapMs(ms: number, step: number = SNAP_MS): number {
 }
 
 export function clampDuration(ms: number): number {
+  if (!Number.isFinite(ms)) return MIN_BLOCK_MS; // a non-finite duration is unusable: clamp it to the minimum
   return Math.max(MIN_BLOCK_MS, snapMs(ms));
 }
 
@@ -29,7 +30,8 @@ export function layout(
 ): Slot[] {
   let x = 0;
   return blocks.map((b) => {
-    const w = Math.max(minPx, b.durationMs * pxPerMs);
+    const raw = b.durationMs * pxPerMs;
+    const w = Number.isFinite(raw) ? Math.max(minPx, raw) : minPx; // a non-finite width falls back to the minimum
     const slot = { id: b.id, x, w };
     x += w + gap;
     return slot;
@@ -38,7 +40,7 @@ export function layout(
 
 /** Scale (px per ms) that makes the whole rundown fit `availablePx`, within the zoom limits. */
 export function fitScale(totalMs: number, availablePx: number): number {
-  if (totalMs <= 0 || availablePx <= 0) return DEFAULT_SCALE;
+  if (!Number.isFinite(totalMs) || !Number.isFinite(availablePx) || totalMs <= 0 || availablePx <= 0) return DEFAULT_SCALE;
   return Math.min(MAX_SCALE, Math.max(MIN_SCALE, availablePx / totalMs));
 }
 
@@ -46,6 +48,7 @@ export function fitScale(totalMs: number, availablePx: number): number {
 export function dropIndex(slots: readonly Slot[], draggedId: string, deltaX: number): number {
   const dragged = slots.find((s) => s.id === draggedId);
   if (dragged === undefined) return -1;
+  if (!Number.isFinite(deltaX)) return slots.findIndex((s) => s.id === draggedId); // no movement: keep the index
   const centre = dragged.x + dragged.w / 2 + deltaX;
   let index = 0;
   for (const s of slots) {
@@ -57,7 +60,7 @@ export function dropIndex(slots: readonly Slot[], draggedId: string, deltaX: num
 
 /** New duration after dragging the right handle by `deltaPx`: snapped to 5 s, never below the minimum. */
 export function resizeDuration(startMs: number, deltaPx: number, pxPerMs: number): number {
-  if (!(pxPerMs > 0)) return startMs;
+  if (!Number.isFinite(deltaPx) || !(pxPerMs > 0)) return startMs; // a non-finite delta leaves the duration unchanged
   return clampDuration(startMs + deltaPx / pxPerMs);
 }
 

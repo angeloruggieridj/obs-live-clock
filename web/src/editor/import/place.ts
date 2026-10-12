@@ -88,7 +88,8 @@ export function planPlacement(doc: Pick<Rundown, 'blocks' | 'preset'>, items: re
     const used = studios.map(mediaMs);
     let bi = 0;
     for (const c of fresh) {
-      const dur = Math.max(0, c.durationMs);
+      // The stored duration (0 for an unknown origin), not the raw candidate: an unknown duration never occupies time.
+      const dur = toMedia(c).plannedDurationMs;
       while (bi < studios.length - 1 && used[bi]! + dur > studios[bi]!.durationMs - doc.preset.warnMs) bi++;
       adds.push({ blockId: studios[bi]!.id, media: toMedia(c) });
       used[bi]! += dur;

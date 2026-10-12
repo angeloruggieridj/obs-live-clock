@@ -62,7 +62,10 @@ export class DeckAdapter {
   private version: string | null = null;
   private source: string | null = null;
   private playlist: string | null = null;
+  /** The last list the engine accepted: the baseline `itemsEqual` compares against, so a refused list is re-sent. */
   private currentItems: DeckItem[] | null = null;
+  /** The last list served to the editor (GET /api/deck/items), even before an episode is loaded. */
+  private servedItems: DeckItem[] | null = null;
   private listeners: Array<[string, ObsListener]> = [];
   private pollCancel: (() => void) | null = null;
   private debounceCancel: (() => void) | null = null;
@@ -82,7 +85,7 @@ export class DeckAdapter {
 
   /** The last known item list, or `null` before the first successful read. */
   items(): DeckItem[] | null {
-    return this.currentItems;
+    return this.servedItems;
   }
 
   /** The OBS source the deck is currently bound to, or `null` when unknown. */
@@ -95,12 +98,13 @@ export class DeckAdapter {
    *
    * The engine refuses the dispatch before an episode is loaded (there is no state to hold the playlist), but the
    * editor imports from the deck while it is still preparing the rundown: in that case the items are still served
-   * through `items()`. `currentItems` stays the last list the engine accepted otherwise, so a refused dispatch is
-   * re-delivered by the next poll or `resync()`.
+   * through `items()`. `currentItems` (the engine's baseline) only moves when the engine ACCEPTS a list, so a list
+   * refused before an episode was loaded is not mistaken for a delivered one by a later poll's `itemsEqual` check.
    */
   private publishPlaylist(items: DeckItem[]): void {
     const accepted = this.deps.dispatch({ type: 'DeckPlaylistChanged', items });
-    if (accepted || !this.hasEpisode()) this.currentItems = items;
+    if (accepted) this.currentItems = items;
+    if (accepted || !this.hasEpisode()) this.servedItems = items;
   }
 
   private hasEpisode(): boolean {

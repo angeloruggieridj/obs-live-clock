@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import { describe, expect, it } from 'vitest';
+import { MIN_BLOCK_MS } from '../../src/editor/model/constants';
 import {
-  MAX_SCALE, MIN_BLOCK_PX, MIN_SCALE, blockKeyIntent, clampDuration, dropIndex, fitScale, layout, resizeDuration, snapMs,
+  DEFAULT_SCALE, MAX_SCALE, MIN_BLOCK_PX, MIN_SCALE, blockKeyIntent, clampDuration, dropIndex, fitScale, layout, resizeDuration, snapMs,
 } from '../../src/editor/timeline/geometry';
 
 const key = (k: string, o: Partial<{ shiftKey: boolean; altKey: boolean; ctrlKey: boolean; metaKey: boolean }> = {}) =>
@@ -78,6 +79,36 @@ describe('resizeDuration', () => {
     expect(resizeDuration(60_000, 24, 0.01)).toBe(60_000); // 62 400 ms -> 60 000
     expect(resizeDuration(60_000, -10_000, 0.01)).toBe(5_000);
     expect(resizeDuration(60_000, 100, 0)).toBe(60_000);
+  });
+});
+
+describe('non-finite guards', () => {
+  const slots = layout([{ id: 'A', durationMs: 100_000 }, { id: 'B', durationMs: 100_000 }, { id: 'C', durationMs: 100_000 }], 0.001);
+
+  it('layout falls back to the minimum drawn width when a width is not finite', () => {
+    expect(layout([{ id: 'a', durationMs: NaN }], 0.001)).toEqual([{ id: 'a', x: 0, w: MIN_BLOCK_PX }]);
+    expect(layout([{ id: 'b', durationMs: 100_000 }], NaN)).toEqual([{ id: 'b', x: 0, w: MIN_BLOCK_PX }]);
+  });
+
+  it('clampDuration never returns a non-finite duration', () => {
+    expect(clampDuration(NaN)).toBe(MIN_BLOCK_MS);
+    expect(clampDuration(Infinity)).toBe(MIN_BLOCK_MS);
+  });
+
+  it('dropIndex ignores a non-finite delta and keeps the current index', () => {
+    expect(dropIndex(slots, 'B', NaN)).toBe(1);
+    expect(dropIndex(slots, 'B', -Infinity)).toBe(1);
+  });
+
+  it('resizeDuration returns the unchanged duration for a non-finite delta', () => {
+    expect(resizeDuration(60_000, NaN, 0.01)).toBe(60_000);
+    expect(resizeDuration(60_000, Infinity, 0.01)).toBe(60_000);
+    expect(resizeDuration(60_000, 100, NaN)).toBe(60_000);
+  });
+
+  it('fitScale ignores non-finite inputs', () => {
+    expect(fitScale(NaN, 1_000)).toBe(DEFAULT_SCALE);
+    expect(fitScale(1_000, NaN)).toBe(DEFAULT_SCALE);
   });
 });
 

@@ -104,7 +104,8 @@ function EditorShell(props: { lang: Lang; pollLiveMs?: number; pollExternalMs?: 
   useEffect(() => {
     const onBeforeUnload = (e: BeforeUnloadEvent): void => {
       const kind = session.autosave.getState().kind;
-      if (kind === 'dirty' || kind === 'saving' || kind === 'error' || kind === 'invalid') {
+      // A pending conflict means the local copy is not what the director confirmed: warn even if the autosave looks clean.
+      if (kind === 'dirty' || kind === 'saving' || kind === 'error' || kind === 'invalid' || session.getSnapshot().conflict !== null) {
         e.preventDefault();
         e.returnValue = '';
       }

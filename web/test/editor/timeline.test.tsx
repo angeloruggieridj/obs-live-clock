@@ -104,6 +104,16 @@ describe('selection and keyboard', () => {
     expect(ids(session)).toEqual(['br1', 'b1', 'b2', 'b3']);
   });
 
+  it('calls preventDefault for every handled key intent (Alt+Arrow must not be browser-back)', async () => {
+    await setup();
+    block('b1').focus();
+    // fireEvent returns false when the event's default was prevented.
+    expect(fireEvent.keyDown(block('b1'), { key: 'a' })).toBe(true); // unhandled: the browser keeps its default
+    expect(fireEvent.keyDown(block('b1'), { key: 'ArrowRight' })).toBe(false);
+    expect(fireEvent.keyDown(block('b1'), { key: 'ArrowRight', altKey: true })).toBe(false);
+    expect(fireEvent.keyDown(block('b1'), { key: 'Delete' })).toBe(false);
+  });
+
   it('Shift+Arrow resizes by 5 s and Ctrl+Shift+Arrow by 1 min; undo reverts the last key press', async () => {
     const { session, user } = await setup();
     block('b3').focus();

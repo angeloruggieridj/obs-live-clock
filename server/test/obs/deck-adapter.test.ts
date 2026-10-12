@@ -20,6 +20,7 @@ function setup(version: string | null, opts: { hasEpisode?: boolean } = {}) {
   ];
   let accept = true;
   let getItemsError: Error | null = null;
+  let hasEpisode = opts.hasEpisode ?? true;
   obs.respond('CallVendorRequest', (d) => {
     if (version === null) throw new ObsRequestError(600, 'vendor not found');
     if (d?.requestType === 'GetStatus') return { responseData: { ...status, count: items.length } };
@@ -35,13 +36,14 @@ function setup(version: string | null, opts: { hasEpisode?: boolean } = {}) {
     dispatch: (i) => { dispatched.push(i as Record<string, unknown>); return accept; },
     report: (e) => void errors.push(e),
     onSourceChanged: () => void sourceChanges++,
-    hasEpisode: () => opts.hasEpisode ?? true,
+    hasEpisode: () => hasEpisode,
   });
   return {
     time, obs, deck, dispatched, errors, status,
     setItems: (x: typeof items) => (items = x),
     setAccept: (v: boolean) => { accept = v; },
     setGetItemsError: (e: Error | null) => { getItemsError = e; },
+    setHasEpisode: (v: boolean) => { hasEpisode = v; },
     sourceChanges: () => sourceChanges,
   };
 }
@@ -233,6 +235,25 @@ describe('DeckAdapter', () => {
       { index: 1, path: 'D:/media/servizio2.mp4', title: 'Servizio 2', durationMs: -1 },
     ]);
     expect(h.dispatched.filter((d) => d.type === 'DeckPlaylistChanged')).toHaveLength(1);
+  });
+
+  it('delivers the playlist to the engine once an episode loads, though it was served while none was loaded', async () => {
+    const h = setup('1.3.3', { hasEpisode: false });
+    h.setAccept(false);
+    await h.deck.start();
+    // No episode yet: the engine got nothing, but the editor must still be served the list.
+    expect(h.dispatched.filter((d) => d.type === 'DeckPlaylistChanged')).toHaveLength(1);
+    expect(h.deck.items()).not.toBeNull();
+
+    // The episode loads: the next poll must SEE that the engine never accepted the list and deliver it.
+    h.setAccept(true);
+    h.setHasEpisode(true);
+    h.time.advance(2_000);
+    await flush();
+    await flush();
+    const changes = h.dispatched.filter((d) => d.type === 'DeckPlaylistChanged');
+    expect(changes).toHaveLength(2);
+    expect(changes[1]).toEqual(changes[0]);
   });
 
   it('resync() clears lastPlayback so the same playback is re-dispatched', async () => {
