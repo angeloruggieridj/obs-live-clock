@@ -418,3 +418,100 @@ TEST_CASE("phase changes are logged once each, with the port") {
     CHECK(launching == 1);
     CHECK(running == 1);
 }
+
+TEST_CASE("dirty screens do not shorten the death window: a running app that stops answering is relaunched once, later") {
+    Harness h;
+    h.appUp = true;
+    h.run(3'000);
+    REQUIRE(h.sup->status().phase == LaunchPhase::Running);
+    h.appUp = false;  // the app disappears while the screen list is still to be delivered
+    h.sup->setScreens({ScreenInfo{"DISPLAY1", 0, 0, 1920, 1080, 1.0, true}});
+    h.run(1'000);  // a per-tick probe would count the misses here and relaunch within about 1 s
+    CHECK(h.launched.empty());
+    h.run(30'000);
+    CHECK(h.launched.size() == 1);
+}
+
+TEST_CASE("remote mode probes the remote app's public health route directly and becomes Running when it answers") {
+    PluginSettings s;
+    s.mode = ServerMode::Remote;
+    s.remoteUrl = "http://studio-pc.local:4460";
+    Harness h(s);
+    h.http.setHandler([](const HttpRequest& r) {
+        if (r.url == "http://studio-pc.local:4460/api/health")
+            return reply(200, nlohmann::json{{"version", "0.6.0"}, {"protocol", 1}, {"instanceId", "remote-1"}}.dump());
+        return unreachable();
+    });
+    h.run(1'000);
+    CHECK(h.sup->status().phase == LaunchPhase::Running);
+    CHECK(h.sup->status().appVersion == "0.6.0");
+    CHECK(h.launched.empty());
+    REQUIRE_FALSE(h.http.requestsTo("/api/health").empty());
+    const auto probe = h.http.requestsTo("/api/health").back();
+    CHECK(probe.method == "GET");
+    CHECK(probe.url == "http://studio-pc.local:4460/api/health");
+    CHECK(probe.timeoutMs == 1500);
+    CHECK(probe.headers.empty());  // the public route: no bearer token, not even Content-Type
+    CHECK(probe.body.empty());
+    CHECK(h.posts("/obs-credentials").empty());
+    CHECK(h.posts("/screens").empty());
+}
+
+TEST_CASE("a local to remote switch probes the remote URL and never the old local app") {
+    Harness h;  // local, healthy on 127.0.0.1:4460
+    h.appUp = true;
+    h.run(2'000);
+    REQUIRE(h.sup->status().phase == LaunchPhase::Running);
+    const auto requestsBefore = h.http.requests().size();
+    const auto credsBefore = h.posts("/obs-credentials").size();
+    PluginSettings remote;
+    remote.mode = ServerMode::Remote;
+    remote.remoteUrl = "http://studio-pc.local:4460";
+    h.http.setHandler([](const HttpRequest& r) {
+        if (r.url == "http://studio-pc.local:4460/api/health")
+            return reply(200, nlohmann::json{{"version", "0.7.0"}, {"protocol", 1}, {"instanceId", "remote-1"}}.dump());
+        return unreachable();
+    });
+    h.sup->applySettings(remote);
+    h.run(1'000);
+    CHECK(h.sup->status().remote);
+    CHECK(h.sup->status().phase == LaunchPhase::Running);
+    CHECK(h.sup->status().appVersion == "0.7.0");
+    const auto all = h.http.requests();
+    for (size_t i = requestsBefore; i < all.size(); ++i) CHECK(all[i].url.rfind("http://127.0.0.1", 0) != 0);
+    CHECK(h.posts("/obs-credentials").size() == credsBefore);  // remote mode hands over nothing
+    CHECK(h.posts("/screens").empty());
+    CHECK(h.launched.empty());
+}
+
+TEST_CASE("remote mode never launches and posts nothing even with dirty screens and a dead remote") {
+    PluginSettings s;
+    s.mode = ServerMode::Remote;
+    s.remoteUrl = "http://studio-pc.local:4460";
+    Harness h(s);
+    h.sup->setScreens({ScreenInfo{"DISPLAY1", 0, 0, 1920, 1080, 1.0, true}});
+    h.run(20'000);
+    CHECK_FALSE(h.http.requestsTo("/api/health").empty());  // it did probe the remote
+    CHECK(h.sup->status().phase == LaunchPhase::Unavailable);
+    CHECK(h.launched.empty());
+    CHECK(h.posts("/obs-credentials").empty());
+    CHECK(h.posts("/screens").empty());
+}
+
+TEST_CASE("a remote URL carrying userinfo is stripped before it is logged") {
+    PluginSettings s;
+    s.mode = ServerMode::Remote;
+    s.remoteUrl = "http://user:pw-must-never-leak-42@clock.example.org:4460";
+    Harness h(s);
+    h.http.setHandler([](const HttpRequest&) { return reply(200, "<html>not us</html>"); });
+    h.run(2'000);
+    int notOurs = 0;
+    for (const auto& l : h.logs) {
+        CHECK(l.find("pw-must-never-leak") == std::string::npos);
+        if (l.find("not OBS Live Clock") != std::string::npos) {
+            ++notOurs;
+            CHECK(l.find("user:pw") == std::string::npos);
+        }
+    }
+    CHECK(notOurs == 1);
+}

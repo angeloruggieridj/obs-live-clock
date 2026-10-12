@@ -79,6 +79,10 @@ public:
 
 private:
     void probe(int64_t now, const PluginSettings& settings);
+    /** Local mode: health through the shared ApiClient (loopback only), then credentials and screens. */
+    void probeLocal(int64_t now, const PluginSettings& settings);
+    /** Remote mode: the public health route through deps_.http only; never the token, never a delivery, never a launch. */
+    void probeRemote(int64_t now, const PluginSettings& settings);
     CredentialState deliverCredentials(int64_t now, const std::string& instanceId);
     void deliverScreens(int64_t now);
     int policyIntervalMs() const;
@@ -100,6 +104,7 @@ private:
 
     // tick-thread only
     int64_t nextProbeAt_ = 0;
+    bool healthOk_ = false;  // the last probe answered Ok: only then may a dirty screen list make a tick due
     std::string lastInstance_;
     bool screensSentOnce_ = false;
     int64_t screensRetryAt_ = 0;

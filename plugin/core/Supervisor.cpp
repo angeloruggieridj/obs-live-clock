@@ -12,6 +12,18 @@ LaunchPolicyConfig policyConfig(const PluginSettings& settings) {
     cfg.allowLaunch = !settings.isRemote() && settings.autoStart;
     return cfg;
 }
+
+/** The authority with any userinfo (user:pass@) removed, so a remote URL can never leak a password into a log line. */
+std::string stripUserInfo(const std::string& url) {
+    const auto scheme = url.find("://");
+    if (scheme == std::string::npos) return url;
+    const auto authStart = scheme + 3;
+    const auto at = url.find('@', authStart);
+    if (at == std::string::npos) return url;
+    const auto authorityEnd = url.find_first_of("/?#", authStart);
+    if (authorityEnd != std::string::npos && at > authorityEnd) return url;  // the '@' is in the path, not the userinfo
+    return url.substr(0, authStart) + url.substr(at + 1);
+}
 }  // namespace
 
 Supervisor::Supervisor(SupervisorDeps deps, PluginSettings settings)
@@ -85,12 +97,16 @@ void Supervisor::tick() {
         settings = settings_;
         settingsChanged = settingsDirty_;
         settingsDirty_ = false;
-        screensWanted = screensDirty_ && now >= screensRetryAt_;
+        // Dirty screens may bring the next probe forward only while the app is actually healthy locally and there is
+        // a list to deliver. A down/incompatible/failed/unavailable app, a remote app and an empty list must not
+        // probe faster than the policy cadence (otherwise a Running app that goes away is counted dead in ~1 s).
+        screensWanted = screensDirty_ && healthOk_ && !settings.isRemote() && !screens_.empty() && now >= screensRetryAt_;
     }
     if (settingsChanged) {
         policy_.setAllowLaunch(!settings.isRemote() && settings.autoStart);
         policy_.reset();
         creds_.forget();
+        healthOk_ = false;
         lastInstance_.clear();
         screensSentOnce_ = false;
         screensRetryAt_ = 0;
@@ -101,24 +117,22 @@ void Supervisor::tick() {
 }
 
 void Supervisor::probe(int64_t now, const PluginSettings& settings) {
-    Status st = status();
-    st.remote = settings.isRemote();
-    int port = 0;
-    if (!settings.isRemote()) {
-        const auto runtime = parseRuntimeJson(deps_.readFile(paths_.runtime).value_or(std::string()));
-        const auto settingsPort = parseSettingsPort(deps_.readFile(paths_.settings).value_or(std::string()));
-        port = resolvePort(runtime, settingsPort);
+    if (settings.isRemote()) {
+        probeRemote(now, settings);
+        return;
     }
+    probeLocal(now, settings);
+}
+
+void Supervisor::probeLocal(int64_t now, const PluginSettings& settings) {
+    Status st = status();
+    st.remote = false;
+    const auto runtime = parseRuntimeJson(deps_.readFile(paths_.runtime).value_or(std::string()));
+    const auto settingsPort = parseSettingsPort(deps_.readFile(paths_.settings).value_or(std::string()));
+    const int port = resolvePort(runtime, settingsPort);
     st.port = port;
     st.dockUrl = dockUrl(settings, port);
     const std::string base = apiBaseUrl(settings, port);
-    if (base.empty()) {  // remote mode with no valid URL: nothing to call, nothing to launch
-        st.phase = LaunchPhase::Unavailable;
-        st.credentials = CredentialState::NotApplicable;
-        nextProbeAt_ = now + policyIntervalMs();
-        publish(st);
-        return;
-    }
     api_.setBaseUrl(base);
 
     const HttpResponse response = api_.health();
@@ -126,7 +140,7 @@ void Supervisor::probe(int64_t now, const PluginSettings& settings) {
     if (response.answered() && response.status == 200) info = parseHealth(response.body);
     if (response.answered() && !info && !notOurAppLogged_) {
         notOurAppLogged_ = true;
-        deps_.log("something answers on " + base + " but it is not OBS Live Clock");
+        deps_.log("something answers on " + stripUserInfo(base) + " but it is not OBS Live Clock");
     }
     HealthObservation observed = HealthObservation::Unreachable;
     Compat compat = Compat::Ok;
@@ -170,20 +184,65 @@ void Supervisor::probe(int64_t now, const PluginSettings& settings) {
             screensSentOnce_ = false;
             screensRetryAt_ = 0;
         }
-        if (settings.isRemote()) {
-            st.credentials = CredentialState::NotApplicable;  // DT-3: remote mode hands over nothing
-        } else {
-            st.credentials = deliverCredentials(now, info->instanceId);
-            if (creds_.consecutiveFailures() > 0) {
-                nextProbeAt_ = std::min(nextProbeAt_, std::max(now + 250, creds_.retryAt()));
-            }
-            deliverScreens(now);
+        st.credentials = deliverCredentials(now, info->instanceId);
+        if (creds_.consecutiveFailures() > 0) {
+            nextProbeAt_ = std::min(nextProbeAt_, std::max(now + 250, creds_.retryAt()));
         }
+        deliverScreens(now);
     } else {
         st.credentials = CredentialState::NotApplicable;
     }
+    healthOk_ = observed == HealthObservation::Ok;
     publish(st);
 }
+
+void Supervisor::probeRemote(int64_t now, const PluginSettings& settings) {
+    Status st = status();
+    st.remote = true;
+    st.port = 0;  // there is no local port to speak of in remote mode
+    st.dockUrl = dockUrl(settings, 0);
+    const std::string base = apiBaseUrl(settings, 0);  // the remote URL, "" when it is invalid
+    if (base.empty()) {  // nothing to call and nothing to launch: just wait
+        st.phase = LaunchPhase::Unavailable;
+        st.credentials = CredentialState::NotApplicable;
+        healthOk_ = false;
+        nextProbeAt_ = now + policyIntervalMs();
+        publish(st);
+        return;
+    }
+    // Remote mode talks to the app's PUBLIC health route with deps_.http directly: no bearer token, no body and
+    // never the local ApiClient (whose loopback URL, token and credentials body must never leave this machine).
+    HttpRequest request;
+    request.method = "GET";
+    request.url = base + "/api/health";
+    request.timeoutMs = 1500;
+    const HttpResponse response = deps_.http.perform(request);
+    std::optional<HealthInfo> info;
+    if (response.answered() && response.status == 200) info = parseHealth(response.body);
+    if (response.answered() && !info && !notOurAppLogged_) {
+        notOurAppLogged_ = true;
+        deps_.log("something answers on " + stripUserInfo(base) + " but it is not OBS Live Clock");
+    }
+    HealthObservation observed = HealthObservation::Unreachable;
+    Compat compat = Compat::Ok;
+    if (info) {
+        compat = checkProtocol(info->protocol);
+        observed = compat == Compat::Ok ? HealthObservation::Ok : HealthObservation::Incompatible;
+    }
+
+    const PolicyDecision decision = policy_.onHealth(now, observed);  // allowLaunch is false: it can never start anything
+    st.phase = decision.phase;
+    st.compat = compat;
+    st.appVersion = info ? info->version : std::string();
+    st.instanceId = info ? info->instanceId : std::string();
+    st.launchSpecMissing = false;  // remote mode never launches: a stale local "cannot start" note must not stick
+    st.launchFailed = false;
+    st.credentials = CredentialState::NotApplicable;  // DT-3: remote mode hands over nothing
+    nextProbeAt_ = now + decision.nextCheckInMs;
+    healthOk_ = observed == HealthObservation::Ok;
+    publish(st);
+}
+
 
 int Supervisor::policyIntervalMs() const { return 5'000; }
 
