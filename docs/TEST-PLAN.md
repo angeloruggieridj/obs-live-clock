@@ -592,3 +592,214 @@ done
 | Backoff riconnessione | `server/src/obs/connection.ts` | Da 0,5 s raddoppiando fino a un tetto di 5 s; l'errore di autenticazione non riprova. |
 
 > Non inserire mai password reali in questo documento né in file versionati.
+
+---
+
+## Client web (Piano 4)
+
+Questa sezione verifica i tre client web — `/presenter`, `/dock` e `/control` — con OBS reale. La build
+(`web/dist`) è servita dal server stesso, quindi non serve un web server separato. Vale lo stesso
+formato: **Setup**, **Azione**, **Risultato atteso**.
+
+### 15.1 Prerequisiti
+
+**Setup**
+
+- `pnpm build` eseguito e server avviato (`pnpm --filter @olc/server dev`), come alla sezione 2.
+- Un TV da **32"** sulla **seconda uscita HDMI**, in regia.
+- Chrome o Edge in **modalità kiosk** su `http://127.0.0.1:4460/presenter`.
+- OBS 30.x con il **Custom Browser Dock** puntato a `http://127.0.0.1:4460/dock`.
+- `/control` aperta in un'altra scheda.
+
+**Risultato atteso**
+
+- Le tre pagine si aprono; senza OBS il presenter mostra i valori stimati, non un errore.
+
+### 15.2 Leggibilità sul TV (AC10)
+
+**Setup**
+
+- Presenter su uno slot `studio`, TV in regia alla distanza di visione.
+
+**Azione**
+
+- Con un righello sul TV misura l'altezza delle cifre principali.
+- Osserva il presenter da **4 m**.
+
+**Risultato atteso**
+
+- Le cifre principali occupano **almeno il 20 % dell'altezza dello schermo** (circa **8 cm** su un
+  32" 16:9).
+- Da 4 m si leggono a colpo d'occhio il blocco, il prossimo elemento e la fine programma.
+
+### 15.3 Colori
+
+**Setup**
+
+- Live in corso con un blocco in onda; dock aperto.
+
+**Azione**
+
+- Portati a **1:00** dalla fine del blocco (dalla dock puoi usare `+0:30` per arrivarci più in fretta).
+- Lascia scadere il conto e supera lo zero.
+- Manda un **break** e osserva gli ultimi 10 s prima del rientro; poi lascia finire il tappo senza
+  rientrare.
+
+**Risultato atteso**
+
+- Da **1:00** il conto diventa **ambra**.
+- Oltre lo zero conta in **rosso**, in avanti (`+0:01` …).
+- Negli ultimi **10 s** prima del rientro da break lo schermo diventa **verde a tutto campo**; se il
+  tappo finisce senza rientrare, torna **rosso** con `+0:00` e riprende a contare.
+
+### 15.4 Titoli lunghi
+
+**Setup**
+
+- Un format con un nome di blocco da **120 caratteri** e un titolo media da **200 caratteri**.
+
+**Azione**
+
+- Manda in onda quel blocco e quel media.
+
+**Risultato atteso**
+
+- Sul TV nulla **esce** dai riquadri (testo troncato o ridotto, senza sbordare).
+- Il dock, alla larghezza di **300 px**, **non** scorre in orizzontale.
+
+### 15.5 Offline
+
+**Setup**
+
+- Le tre pagine aperte; DevTools → Network aperto.
+
+**Azione**
+
+- Scollega la rete.
+
+**Risultato atteso**
+
+- Tutte e tre le pagine si caricano correttamente, **font inclusi** (nessuna risorsa esterna).
+- In DevTools → Network le uniche richieste sono verso **`127.0.0.1`**.
+
+### 15.6 Riconnessione
+
+**Setup**
+
+- Live in corso, presenter e dock in onda.
+
+**Azione**
+
+1. Ferma il server a metà spettacolo.
+2. Riavvialo.
+3. Riavvia il server **dieci volte** in rapida successione.
+
+**Risultato atteso**
+
+- Alla caduta, entro **3 s** compare `RICONNESSIONE…`; i conti si **fermano e si attenuano**; dopo
+  **10 s** mostrano `—`.
+- Al riavvio le schermate si **riprendono da sole** con i valori corretti.
+- I dieci riavvii ravvicinati **non** producono una tempesta di riconnessioni: al massimo una
+  connessione per client per ogni passo del backoff.
+
+### 15.7 OBS perso
+
+**Setup**
+
+- Live in corso con OBS connesso.
+
+**Azione**
+
+1. Chiudi OBS.
+2. Riapri OBS.
+
+**Risultato atteso**
+
+- Alla chiusura, sul presenter compaiono `⚠ OBS NON CONNESSO` e l'etichetta `STIMATO`; nel dock
+  compare un **avviso**.
+- Alla riapertura tutto torna normale (valori misurati).
+
+### 15.8 Kiosk
+
+**Setup**
+
+- Presenter in modalità kiosk sul TV.
+
+**Azione**
+
+- Muovi il mouse sul TV.
+- Lascia la pagina aperta **15 minuti** senza interagire.
+
+**Risultato atteso**
+
+- Il puntatore **non** è visibile sul presenter.
+- Il TV **non** va in standby né si attenua (Wake Lock attivo).
+
+### 15.9 Dock in OBS 30 (CEF 103)
+
+**Setup**
+
+- Dock caricato nel Custom Browser Dock di OBS 30.
+
+**Azione**
+
+- Verifica che la pagina funzioni e che la sezione **Emergenza** sia chiusa all'apertura.
+- Premi **NEXT**; poi invia un messaggio e infine premi **CLEAR**.
+
+**Risultato atteso**
+
+- La pagina funziona nel CEF di OBS.
+- La sezione **Emergenza** è **chiusa per impostazione predefinita**.
+- **NEXT** richiede **doppio click** o **pressione prolungata**.
+- Un messaggio inviato dalla dock compare sul presenter entro **500 ms** (AC9) e sparisce dopo il suo
+  timeout.
+- **CLEAR** lo rimuove.
+
+### 15.10 Decisioni
+
+**Setup**
+
+- Live in corso.
+
+**Azione**
+
+- Ferma e riavvia la REC.
+- Cambia la scelta della decisione mostrata.
+
+**Risultato atteso**
+
+- Nel dock compare la decisione con il **default già premuto**.
+- Cambiando scelta, la scelta si riflette nella **vista di regia**.
+
+### 15.11 Vista di regia
+
+**Setup**
+
+- Live in corso; `/control` aperta.
+
+**Azione**
+
+- Osserva il rundown durante la live.
+- Guarda il feed degli eventi.
+- Prova a **caricare un'altra puntata** mentre lo spettacolo è in onda.
+
+**Risultato atteso**
+
+- Il rundown mostra i tempi **pianificati** e **reali**; le righe di studio hanno durata `—`; con OBS
+  chiuso le durate stimate portano l'etichetta `STIMATO`.
+- Il feed elenca gli **eventi della sessione**.
+- Il caricamento di un'altra puntata durante la live è **rifiutato** con il messaggio esplicito.
+
+### 15.12 Lingua
+
+**Setup**
+
+- Le tre pagine aperte.
+
+**Azione**
+
+- Aggiungi `?lang=en` all'URL di ciascuna pagina.
+
+**Risultato atteso**
+
+- Tutte e tre le pagine passano all'inglese.

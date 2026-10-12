@@ -211,22 +211,31 @@ La proiezione trasforma `LiveState` in una **vista per ruolo** (`presenter`, `co
 
 ```ts
 Anchor =
- | { kind: 'countdown', endsAt: ServerWallMs, source: 'measured'|'planned'|'estimated', frozen?: false }
- | { kind: 'countup',   since:  ServerWallMs, source }
- | { kind: 'frozen',    valueMs: number, source, reason: 'paused'|'hold' }
- | { kind: 'unknown',   reason: string }                   // mostrato come "—"
+ | { kind: 'countdown', endsAt: ServerWallMs, source: 'measured'|'planned'|'estimated' }
+ | { kind: 'frozen',    valueMs: number, source }
+ | { kind: 'unknown' }                                     // mostrato come "—"
 ```
 
-Esempio di vista `presenter`:
+Un conto oltre lo zero si mostra come **sforamento positivo** (`+0:00`, `+0:01` …): **non** esiste un
+`countup`. Con `kind: 'frozen'` (`valueMs` è già pronto) il valore è in pausa — media in pausa o REC in
+pausa — e si mostra con l'etichetta "PAUSA". Tutti gli schemi vivono in `shared/src/live/views.ts`.
+
+Esempio di vista `presenter` (il payload `view` del messaggio `{ "type": "view", "rev", "role", "view" }`):
 ```json
-{ "type": "view", "rev": 812, "role": "presenter",
-  "phase": "live", "segment": "studio",
-  "main":  { "label": "BLOCCO 2 · Secondo blocco", "anchor": { "kind":"countdown","endsAt":1790000000000,"source":"measured" }, "tally": "warn" },
-  "next":  { "label": "SERVIZIO 2 · Intervista", "durationMs": 184000 },
-  "programEnd": { "anchor": { "kind":"countdown","endsAt":1790002520000,"source":"planned" }, "wallTime": "19:58:40" },
-  "message": null,
+{
+  "phase": "live", "segment": "studio", "rundownFinished": false,
+  "block": { "index": 1, "name": "Secondo blocco", "anchor": { "kind":"countdown","endsAt":1790000000000,"source":"measured" } },
+  "onAir": null,
+  "returnTo": { "blockName": "Terzo blocco", "anchor": { "kind":"countdown","endsAt":1790000600000,"source":"planned" } },
+  "next": { "title": "Servizio 2 · Intervista", "durationMs": 184000, "source": "planned" },
+  "programEnd": { "anchor": { "kind":"countdown","endsAt":1790002520000,"source":"planned" }, "endsAtWall": 1790002520000 },
   "delay": { "ms": 42000, "source": "measured" },
-  "status": { "rec": true, "stream": false, "obs": "ok" } }
+  "thresholds": { "warnMs": 60000, "returnImminentMs": 10000 },
+  "message": null,
+  "status": { "rec": true, "stream": false, "recPaused": false, "obs": "ok", "control": "auto" },
+  "preshow": null,
+  "ended": null
+}
 ```
 
 ### 6.2 Messaggi
@@ -245,8 +254,19 @@ Ruoli dei client: `presenter` (solo visualizzazione) e `control` (dock e vista e
 Gli schemi zod sono in `shared/protocol` e vengono validati su entrambi i lati. `protocol` è un intero: un client incompatibile viene rifiutato con un messaggio chiaro.
 
 ### 6.3 Rendering nei client
-- `useServerClock()` restituisce l'ora del server stimata (`Date.now() + offset`).
-- `<AnchoredTime anchor>` si aggiorna con `requestAnimationFrame` scrivendo direttamente nel nodo di testo, senza rendere React a 60 fps. Arrotonda al secondo per il display, con cambio del numero sincronizzato con il bordo del secondo.
+- `useServerClock()` restituisce l'ora del server stimata (`Date.now() + offset`). L'offset è il campione
+  con **RTT minimo su una finestra di 8** (`CLOCK_WINDOW = 8`): il campione meno ritardato è il meno
+  distorto. Il server è l'unica fonte di tempo: il client non mostra mai il proprio orologio a parete.
+- `<AnchoredTime anchor>` si aggiorna con `requestAnimationFrame` scrivendo direttamente nel nodo di testo,
+  senza rendere React a 60 fps. Il display arrotonda **per eccesso al secondo intero** (ceil) e cambia sul
+  bordo del secondo; la **tally** deriva dai tick mostrati, non dal valore grezzo.
+- I conti alla rovescia avanzano solo in avanti: un **passo indietro di un tick** (mostrato 41, ora 42) viene
+  trattenuto finché non è più di **250 ms** oltre il bordo (`TICK_HYSTERESIS_MS = 250`), perché quasi sempre
+  è jitter da un nuovo ancoraggio o da un nuovo campione dell'orologio; ogni altra variazione si mostra
+  subito.
+- **Staleness.** Se manca un aggiornamento per più di **2 s** i dati sono *stale*: i conti si **congelano
+  all'istante** in cui sono diventati vecchi (non proseguono come se fossero freschi) e, dopo **10 s**
+  (`STALE_BLANK_MS`), mostrano `—`.
 - `source` e *stale* determinano lo stile: stimato (etichetta "STIMATO" e stile attenuato) e sconosciuto ("—").
 
 ---
@@ -277,9 +297,18 @@ L'undo/redo dell'editor è **lato client** (stack di comandi sul documento), con
 
 ## 8. Web app
 
-Una build Vite con quattro entry: `/editor`, `/dock`, `/control`, `/presenter`. Il server le serve come file statici.
+Una build Vite servita dal server stesso dalla cartella `web/dist`. Le entry attuali sono tre —
+`/dock`, `/control` e `/presenter`; l'entry **`/editor`** arriva con il Piano 5.
 
-- **Editor.** Libreria dei format e delle puntate, timeline orizzontale (dnd-kit) con blocchi proporzionali alla durata, maniglie di ridimensionamento con passo di 5 s, pannello proprietà, collegamento a scene e gruppi da `/api/obs/scenes`, import della playlist, pannello di validazione, Check OBS, undo/redo.
+Il server **non** usa `@fastify/static` (tira dentro una dipendenza con licenza BlueOak): ha un
+**gestore statico scritto a mano** (`server/src/api/static.ts`). Serve una `index.html` per pagina
+**non cachata** (`cache-control: no-cache`) e gli asset con hash sotto `/assets` come **immutabili**
+(`max-age=31536000, immutable`); `/` reindirizza a `/control`. Se la build manca risponde `503` con
+l'istruzione per eseguirla.
+
+Per lo sviluppo si usa **`pnpm dev`** (simulatore OBS, server e Vite insieme).
+
+- **Editor (Piano 5).** Libreria dei format e delle puntate, timeline orizzontale (dnd-kit) con blocchi proporzionali alla durata, maniglie di ridimensionamento con passo di 5 s, pannello proprietà, collegamento a scene e gruppi da `/api/obs/scenes`, import della playlist, pannello di validazione, Check OBS, undo/redo.
 - **Dock.** Layout verticale a partire da 300 px:
   - stato e blocco corrente;
   - ritardo e fine prevista;

@@ -38,17 +38,22 @@ Punti noti e rimandati, emersi dalle revisioni. Per ogni voce: dove intervenire 
 - **Slot di stacco chiuso a fine blocco stimata.** Rifinire la chiusura dello slot quando la fine del blocco è solo stimata (`engine/reducer.ts`).
 - **Skew dello snapshot sotto dispatch continuo.** L'accorpamento dei salvataggi può far divergere lo snapshot dallo stato più recente.
 
-## Piano 4 — client web (monitor, dock, vista estesa)
+## Piano 4 — residui
 
-- **WebSocket, backpressure.** Chiudere il socket quando `bufferedAmount` supera un limite.
-- **WebSocket, peer morti.** Usare ping/pong per eliminare i peer half-open, per esempio un tablet che perde il Wi-Fi.
-- **`PresenterView.block` durante media e break.** Resta valorizzato anche in quei segmenti, quindi il client lo mostra solo quando `segment === 'studio'`.
-- **Righe di studio nella vista di regia.** Hanno `durationMs: null` (durata elastica): mostrarle come "—".
-- **Logica degli `ack`.** `ack.changed === false` significa che il comando non ha avuto effetto, e la UI deve dirlo.
-- **Guardie minori in `server/src/api/ws.ts`.**
-  - L'invio dentro il `catch` non è protetto a sua volta.
-  - Il ciclo per-client dell'heartbeat è protetto solo dal `try` esterno.
-  - Il test sul `rev` dell'heartbeat dipende dai tempi.
+Il Piano 4 ha chiuso backpressure, peer half-open, la guardia su `block`, le righe di studio `—`, la
+logica degli `ack` e le guardie in `server/src/api/ws.ts`. Restano:
+
+- **Tempi previsti per riga** nella vista estesa (SPEC §8 "previsti"): oggi mostra solo pianificato e reale.
+- **Feed eventi dal journal del server** invece che dalla sessione del client (serve un endpoint di lettura del journal).
+- **`PresenterView.delay` dopo FINE.** Continua a crescere nel motore; il client lo nasconde. Valutare di congelarlo nella proiezione.
+- **Numerazione "BLOCCO n".** Conta anche i break (il secondo blocco di studio è "BLOCCO 3"): decisione di prodotto da confermare.
+- **Fuso orario degli orari a parete.** Il client usa quello del browser: un tablet in LAN con fuso diverso mostrerebbe orari diversi.
+- **`?screen=`.** Oggi è solo un'etichetta nel titolo; il Piano 6 ne definisce l'uso con il kiosk.
+- **Etichette hotkey nel dock** ("F1 · STRINGI", DT-9). Oggi mostra solo il numero di slot; il tasto reale arriva dal plugin (Piano 6).
+- **Percorso della web app dopo il bundle** (Piano 7): `OLC_WEB_ROOT` / `ServerOptions.webRoot`.
+- **Licenza OFL del font Inter** da includere nei crediti e nell'installer (Piano 7).
+- **Test Playwright in CI.** Il Task 16 non è stato eseguito, quindi oggi non esiste alcun test end-to-end in CI; da aggiungere, o da estendere se un domani lo si introduce.
+- **Fuori scaletta con scena sconosciuta.** `START PROGRAM` senza OBS marca `offScript` con `scene: ''` (`engine/matcher.ts`) e il dock mostra "—" come nome della scena: valutare di non marcare il fuori scaletta quando la scena in Program non è nota.
 
 ## Piano 5 — editor
 
