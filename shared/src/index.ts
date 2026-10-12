@@ -4,3 +4,4 @@ export * from './model/episode';
 export * from './model/validate';
 export * from './protocol/messages';
 export * from './live/views';
+export * from './playlist/parse';
