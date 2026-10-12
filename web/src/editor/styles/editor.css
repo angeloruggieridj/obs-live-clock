@@ -1,0 +1,29 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+:root {
+  --ed-studio: #1d3a5f;       /* studio block */
+  --ed-studio-edge: #4a86c5;
+  --ed-break: #4a3b12;        /* break block */
+  --ed-break-edge: #c9a227;
+  --ed-focus: #ffb000;
+  --ed-gap: 12px;
+}
+html, body { height: 100%; }
+.ed-root {
+  display: grid; height: 100vh; gap: var(--ed-gap); padding: var(--ed-gap); box-sizing: border-box;
+  grid-template-columns: minmax(240px, 280px) minmax(0, 1fr) minmax(280px, 340px);
+  grid-template-rows: auto minmax(0, 1fr) minmax(0, 220px);
+  grid-template-areas: "bar bar bar" "library timeline properties" "settings validation validation";
+  background: var(--bg); color: var(--fg); font-family: var(--font);
+}
+.ed-bar { grid-area: bar; }
+.ed-library { grid-area: library; } .ed-timeline { grid-area: timeline; } .ed-properties { grid-area: properties; }
+.ed-settings { grid-area: settings; } .ed-validation { grid-area: validation; }
+.ed-region { background: var(--surface); border: 1px solid var(--tile-border); border-radius: 6px; padding: 8px; overflow: auto; min-width: 0; }
+.ed-root :focus-visible { outline: 2px solid var(--ed-focus); outline-offset: 2px; }
+.ed-btn { background: var(--surface); color: var(--fg); border: 1px solid var(--tile-border); border-radius: 4px; padding: 6px 10px; cursor: pointer; font: inherit; }
+.ed-btn:disabled { color: var(--fg-off); cursor: not-allowed; }
+.ed-btn-danger { border-color: var(--red); }
+.ed-error { color: var(--red); } .ed-warn { color: var(--amber); }
+@media (max-width: 1000px) {
+  .ed-root { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; grid-template-areas: "bar" "library" "timeline" "properties" "settings" "validation"; height: auto; }
+}

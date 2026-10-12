@@ -12,7 +12,7 @@ afterEach(async () => {
   while (closers.length > 0) await closers.pop()!();
 });
 
-async function webRoot(pages: string[] = ['presenter', 'dock', 'control']): Promise<string> {
+async function webRoot(pages: string[] = ['presenter', 'dock', 'control', 'editor']): Promise<string> {
   const root = await tempDir();
   for (const page of pages) {
     await mkdir(join(root, page), { recursive: true });
@@ -36,7 +36,7 @@ async function app(root: string | null) {
 describe('static web app', () => {
   it('serves each page with and without the trailing slash, uncached', async () => {
     const a = await app(await webRoot());
-    for (const page of ['presenter', 'dock', 'control']) {
+    for (const page of ['presenter', 'dock', 'control', 'editor']) {
       for (const url of [`/${page}`, `/${page}/`, `/${page}?lang=en&screen=tv-1`]) {
         const res = await a.inject({ method: 'GET', url });
         expect(res.statusCode, url).toBe(200);
@@ -52,6 +52,18 @@ describe('static web app', () => {
     const res = await (await app(await webRoot())).inject({ method: 'GET', url: '/' });
     expect(res.statusCode).toBe(302);
     expect(res.headers.location).toBe('/control');
+  });
+
+  it('serves the editor page uncached and keeps the root redirecting to control', async () => {
+    const a = await app(await webRoot());
+    for (const url of ['/editor', '/editor/']) {
+      const res = await a.inject({ method: 'GET', url });
+      expect(res.statusCode, url).toBe(200);
+      expect(res.headers['cache-control']).toBe('no-cache');
+    }
+    const root = await a.inject({ method: 'GET', url: '/' });
+    expect(root.statusCode).toBe(302);
+    expect(root.headers.location).toBe('/control');
   });
 
   it('serves hashed assets as immutable with the right type', async () => {
