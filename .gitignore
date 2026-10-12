@@ -23,6 +23,7 @@ Thumbs.db
 # Local runtime data
 *.log
 .env
+.dev-data/
 
 # Local Python tooling
 .venv/
