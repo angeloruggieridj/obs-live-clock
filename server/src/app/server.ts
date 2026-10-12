@@ -180,6 +180,8 @@ export async function buildServer(opts: ServerOptions): Promise<BuiltServer> {
     try {
       await withTimeout(obs.stop(), OBS_STOP_TIMEOUT_MS, clock, scheduler);
     } finally {
+      // A screen report queued just before shutdown must land, and before the process exits.
+      await screens.flush();
       // Flush persistence before disposing so a snapshot/journal write queued by the last dispatch lands.
       await runtime.flush();
       runtime.dispose();

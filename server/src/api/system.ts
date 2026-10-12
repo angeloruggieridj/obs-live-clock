@@ -17,6 +17,13 @@ export interface SystemContext {
 /** Only the kiosk block can be changed from the app; port and LAN access need a restart and live in the file. */
 const PutSettingsBody = z.strictObject({ kiosk: KioskSettings });
 
+const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
+
+/** The machine itself only: a LAN host must not be able to point the kiosk at an arbitrary executable. */
+function isLoopback(address: string | undefined): boolean {
+  return address !== undefined && LOOPBACK.has(address);
+}
+
 /**
  * The operator-facing side of the plugin/kiosk work (public like the other /api routes: localhost by default).
  * Nothing here returns the OBS password or the bearer token.
@@ -32,9 +39,19 @@ export function registerSystem(app: FastifyInstance, ctx: SystemContext): void {
   app.put('/api/settings', async (req, reply) => {
     const parsed = PutSettingsBody.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_body' });
+    // browserPath decides which executable the kiosk spawns: only loopback may change it. Every other kiosk
+    // field stays settable from anywhere. The 403 carries no part of the body.
+    if (parsed.data.kiosk.browserPath !== ctx.settings.get().kiosk.browserPath && !isLoopback(req.socket.remoteAddress)) {
+      return reply.code(403).send({ error: 'forbidden' });
+    }
     try {
       const next = await ctx.settings.setKiosk(parsed.data.kiosk);
-      await ctx.kiosk.applySettings(next.kiosk);
+      try {
+        await ctx.kiosk.applySettings(next.kiosk);
+      } catch (err) {
+        // The settings are saved; answer with them rather than a 500 (the kiosk status carries the error state).
+        req.log.error(`saved the kiosk settings but could not apply them: ${err instanceof Error ? err.message : String(err)}`);
+      }
       return publicSettings(next);
     } catch (err) {
       if (err instanceof SettingsFileInvalidError) return reply.code(409).send({ error: 'settings_file_invalid' });

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { soloFutsalFormat } from '@olc/shared/testing';
 import { FakeTime } from '../../src/clock/clock';
 import { Settings } from '../../src/app/settings';
@@ -97,6 +97,66 @@ describe('PUT /api/settings', () => {
     expect(res.json()).toEqual({ error: 'settings_file_invalid' });
     expect(await readFile(join(dataDir, 'settings.json'), 'utf8')).toBe('{ broken');
   });
+
+  it('refuses a browserPath change from a non-loopback request with 403 and echoes nothing', async () => {
+    const { app, dataDir } = await boot();
+    const res = await app.inject({
+      method: 'PUT',
+      url: '/api/settings',
+      remoteAddress: '192.168.1.20',
+      payload: { kiosk: { browserPath: 'C:/evil-browser.exe' } },
+    });
+    expect(res.statusCode).toBe(403);
+    expect(res.json()).toEqual({ error: 'forbidden' });
+    expect(res.body).not.toContain('evil-browser');
+    // Nothing was saved.
+    await expect(readFile(join(dataDir, 'settings.json'), 'utf8')).rejects.toThrow();
+  });
+
+  it('lets a non-loopback request change the other kiosk fields', async () => {
+    const { app } = await boot();
+    const res = await app.inject({
+      method: 'PUT',
+      url: '/api/settings',
+      remoteAddress: '192.168.1.20',
+      payload: { kiosk: { enabled: true, screen: { kind: 'position', x: 100, y: 0 } } },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().kiosk).toMatchObject({ enabled: true, screen: { kind: 'position', x: 100, y: 0 } });
+  });
+
+  it('lets a loopback request set browserPath', async () => {
+    const { app } = await boot();
+    const res = await app.inject({
+      method: 'PUT',
+      url: '/api/settings',
+      payload: { kiosk: { browserPath: 'C:/other-chrome.exe' } },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().kiosk.browserPath).toBe('C:/other-chrome.exe');
+  });
+
+  it('answers 200 with the saved settings when the kiosk cannot be applied afterwards', async () => {
+    const dataDir = await tempDir();
+    const time = new FakeTime();
+    const server = await buildTestServer({
+      dataDir,
+      clock: time,
+      scheduler: time,
+      kioskDeps: {
+        detect: async () => {
+          throw new Error('detect failed');
+        },
+        spawn: () => new FakeBrowser(),
+      },
+    });
+    apps.push(server.app);
+    const res = await server.app.inject({ method: 'PUT', url: '/api/settings', payload: { kiosk: { enabled: true } } });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().kiosk).toMatchObject({ enabled: true });
+    const onDisk = JSON.parse(await readFile(join(dataDir, 'settings.json'), 'utf8')) as { kiosk: { enabled: boolean } };
+    expect(onDisk.kiosk.enabled).toBe(true);
+  });
 });
 
 describe('kiosk routes', () => {
@@ -127,7 +187,7 @@ describe('kiosk routes', () => {
 describe('screens from the plugin reach the kiosk', () => {
   it('a named monitor waits for the list, opens when the plugin reports it, and GET /api/screens shows it', async () => {
     const settings = Settings.parse({ kiosk: { enabled: true, screen: { kind: 'name', name: 'DISPLAY2' } } });
-    const { app, spawned, dataDir } = await boot({ settings });
+    const { app, spawned, dataDir, screens } = await boot({ settings });
     const token = (await readFile(join(dataDir, 'secret.token'), 'utf8')).trim();
     expect((await app.inject({ method: 'POST', url: '/api/kiosk/start' })).json()).toMatchObject({ state: 'waiting_for_screens' });
     const list = [
@@ -136,8 +196,8 @@ describe('screens from the plugin reach the kiosk', () => {
     ];
     const post = await app.inject({ method: 'POST', url: '/api/internal/screens', headers: { authorization: `Bearer ${token}` }, payload: { screens: list } });
     expect(post.statusCode).toBe(204);
-    await new Promise((r) => setTimeout(r, 20));
-    expect(spawned).toHaveLength(1);
+    await screens.flush();
+    await vi.waitFor(() => expect(spawned).toHaveLength(1));
     expect(spawned[0]!.args).toContain('--window-position=1936,16');
     const shown = (await app.inject({ method: 'GET', url: '/api/screens' })).json() as { live: boolean; screens: unknown[] };
     expect(shown.live).toBe(true);
@@ -155,7 +215,7 @@ describe('screens from the plugin reach the kiosk', () => {
       headers: { authorization: `Bearer ${token}` },
       payload: { screens: [{ name: 'DISPLAY1', x: 0, y: 0, width: 1920, height: 1080, primary: true }] },
     });
-    await new Promise((r) => setTimeout(r, 50));
+    await first.screens.flush();
     await first.app.close();
     apps.pop();
     const second = await boot({ dataDir });
