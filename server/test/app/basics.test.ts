@@ -30,6 +30,8 @@ describe('defaultDataDir', () => {
     expect(p.snapshot).toBe(join('/r', 'live', 'snapshot.json'));
     expect(p.journal('ep-1')).toBe(join('/r', 'live', 'ep-1.log.jsonl'));
     expect(p.formats).toBe(join('/r', 'formats'));
+    expect(p.screens).toBe(join('/r', 'screens.json'));
+    expect(p.kioskProfile).toBe(join('/r', 'kiosk-profile'));
   });
 
   it('resolves the web root next to the repository unless OLC_WEB_ROOT is set', () => {
@@ -43,7 +45,7 @@ describe('defaultDataDir', () => {
 describe('settings', () => {
   it('defaults to localhost:4460 when the file is missing', async () => {
     const s = await loadSettings(join(await tempDir(), 'settings.json'));
-    expect(s).toEqual({ port: 4460, lanAccess: false });
+    expect(s).toEqual({ port: 4460, lanAccess: false, kiosk: { enabled: false, screen: { kind: 'primary' }, restart: true } });
     expect(listenHost(s)).toBe('127.0.0.1');
   });
 
@@ -60,7 +62,7 @@ describe('settings', () => {
     await writeFile(join(dir, 'settings.json'), JSON.stringify({ port: 70_000 }));
     const errors: unknown[] = [];
     const s = await loadSettings(join(dir, 'settings.json'), (err) => errors.push(err));
-    expect(s).toEqual({ port: 4460, lanAccess: false });
+    expect(s).toEqual({ port: 4460, lanAccess: false, kiosk: { enabled: false, screen: { kind: 'primary' }, restart: true } });
     expect(errors).toHaveLength(1);
   });
 

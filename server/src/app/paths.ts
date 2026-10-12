@@ -33,6 +33,10 @@ export interface DataPaths {
   secret: string;
   lock: string;
   runtime: string;
+  /** Last monitor list the OBS plugin reported (kiosk placement after a restart). */
+  screens: string;
+  /** Chromium user-data-dir of the kiosk browser: its own profile, never the operator's. */
+  kioskProfile: string;
 }
 
 export function dataPaths(root: string): DataPaths {
@@ -47,5 +51,7 @@ export function dataPaths(root: string): DataPaths {
     secret: join(root, 'secret.token'),
     lock: join(root, 'instance.lock'),
     runtime: join(root, 'runtime.json'),
+    screens: join(root, 'screens.json'),
+    kioskProfile: join(root, 'kiosk-profile'),
   };
 }
