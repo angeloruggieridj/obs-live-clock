@@ -74,6 +74,9 @@ export class EditorSession {
     this.autosave = new Autosave(
       this.store,
       async (doc) => {
+        // A save that is starting ends the current coalescing run, so an edit made after this save can never
+        // merge into the undo step of the edit that was just persisted.
+        this.store.seal();
         if (doc === null) return;
         // The target comes from the document, so a save that started before open()/forget() moved on still writes to
         // the document it captured (and a stale tab never overwrites the copy the conflict is showing).

@@ -138,6 +138,7 @@ export class ObsService {
       dispatch: (input) => this.dispatch(input),
       report: (err) => this.report(err),
       onSourceChanged: () => this.adapter?.refreshProgram(),
+      hasEpisode: () => this.deps.runtime.getState() !== null,
     });
     this.deck = deck;
     let started = false;

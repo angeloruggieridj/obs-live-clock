@@ -101,6 +101,17 @@ describe('autosave through the session', () => {
     expect(session.autosave.getState().kind).toBe('clean');
   });
 
+  it('an edit after a save is its own undo step, so undo returns the saved name', async () => {
+    const { api, time, session } = setup();
+    await session.open(FORMAT);
+    session.apply(renameDoc('A'));
+    await time.advance(900); // the save starts and ends the coalescing run
+    expect(api.formats.get('solo-futsal')!.name).toBe('A');
+    session.apply(renameDoc('B'));
+    session.undo();
+    expect(session.store.getSnapshot().doc?.name).toBe('A');
+  });
+
   it('shows the failure, retries, and the server ends equal to the screen', async () => {
     const { api, time, session } = setup();
     await session.open(FORMAT);

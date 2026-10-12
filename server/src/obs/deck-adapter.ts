@@ -22,6 +22,12 @@ export interface DeckAdapterDeps {
   dispatch(input: WithoutAt<EngineInput>): boolean;
   report(err: unknown): void;
   onSourceChanged(): void;
+  /**
+   * Whether an episode is loaded into the engine. Before that a `DeckPlaylistChanged` has nowhere to go, so
+   * `dispatch` returns false; the deck must still serve its items to the editor, which imports from it while
+   * it is preparing the rundown. Defaults to true (assume the engine can hold the playlist).
+   */
+  hasEpisode?(): boolean;
 }
 
 const VENDOR = 'obs-playlist-deck';
@@ -84,6 +90,23 @@ export class DeckAdapter {
     return this.source;
   }
 
+  /**
+   * Publishes the item list to the engine and serves it to the editor.
+   *
+   * The engine refuses the dispatch before an episode is loaded (there is no state to hold the playlist), but the
+   * editor imports from the deck while it is still preparing the rundown: in that case the items are still served
+   * through `items()`. `currentItems` stays the last list the engine accepted otherwise, so a refused dispatch is
+   * re-delivered by the next poll or `resync()`.
+   */
+  private publishPlaylist(items: DeckItem[]): void {
+    const accepted = this.deps.dispatch({ type: 'DeckPlaylistChanged', items });
+    if (accepted || !this.hasEpisode()) this.currentItems = items;
+  }
+
+  private hasEpisode(): boolean {
+    return this.deps.hasEpisode?.() ?? true;
+  }
+
   async start(): Promise<void> {
     this.running = true;
     let status: ObsData;
@@ -127,7 +150,7 @@ export class DeckAdapter {
       return;
     }
     if (!this.running) return;
-    if (this.deps.dispatch({ type: 'DeckPlaylistChanged', items })) this.currentItems = items;
+    this.publishPlaylist(items);
     this.dispatchStatusPlayback(status);
 
     if (this.capability === 'events') this.attach();
@@ -158,7 +181,7 @@ export class DeckAdapter {
 
     this.lastPlayback = null;
     this.currentItems = null;
-    if (this.deps.dispatch({ type: 'DeckPlaylistChanged', items })) this.currentItems = items;
+    this.publishPlaylist(items);
     this.dispatchStatusPlayback(status);
   }
 
@@ -344,7 +367,7 @@ export class DeckAdapter {
     const changed = source !== this.source;
     this.source = source;
     if (typeof status.playlistName === 'string') this.playlist = status.playlistName;
-    if (this.deps.dispatch({ type: 'DeckPlaylistChanged', items })) this.currentItems = items;
+    this.publishPlaylist(items);
     if (changed) this.deps.onSourceChanged();
   }
 
@@ -384,7 +407,7 @@ export class DeckAdapter {
     }
     if (typeof status.playlistName === 'string') this.playlist = status.playlistName;
     if (!itemsEqual(this.currentItems, items)) {
-      if (this.deps.dispatch({ type: 'DeckPlaylistChanged', items })) this.currentItems = items;
+      this.publishPlaylist(items);
     }
   }
 }
