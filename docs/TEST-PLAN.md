@@ -1039,3 +1039,37 @@ Il campo `data-state` di `[data-testid="save-state"]` dice lo stato del salvatag
 
 - In italiano tutti i testi sono in italiano; con `?lang=en` **tutti** i pannelli passano all'inglese.
 - Nel CEF del dock la pagina **si apre e funziona** senza errori in console: l'editor non è pensato per il dock (300 px), ma non deve rompersi.
+
+---
+
+## Plugin e kiosk (Piano 6)
+
+### P0 — Prerequisiti
+- OBS ≥ 30 (provato solo con 32.2.2), obs-websocket attivo con password, Node 24, il repository con `pnpm build` eseguito.
+- Il plugin installato: `plugin/scripts/build-plugin.sh` e copia di `obs-live-clock.dll` in `C:\ProgramData\obs-studio\plugins\obs-live-clock\` (e in `bin\64bit\`).
+- Un file `launch.json` nella cartella dati dell'app (`%APPDATA%\obs-live-clock`) che dice come avviarla, per esempio `{"command":"C:/Program Files/nodejs/node.exe","args":["<repo>/server/node_modules/tsx/dist/cli.mjs","src/app/main.ts"],"cwd":"<repo>/server"}`. Non mettere password nei `args`.
+- **Non provare mai nel profilo di produzione**: usa una copia portatile di OBS (`obs64.exe --portable`).
+
+### P1 — Il pannello compare
+Avvia OBS. **Pannelli → OBS Live Clock** (al primo avvio il pannello è nascosto: è il comportamento di OBS). Atteso: il pannello mostra la pagina `/dock` entro 5 s; nel log di OBS `dock registered (browser panel)`. Se compare il logo di OBS, attendi 2 s (il pannello naviga di nuovo da solo); se resta, segnalalo (causa non nota, vedi BACKLOG). Con un OBS senza pannelli browser (o su Wayland) compaiono invece il messaggio, l'indirizzo e il pulsante «Apri nel browser».
+
+### P2 — L'app parte da sola
+Chiudi l'app, poi riavvia OBS. Atteso: nel log `started the app`, entro 10 s `app running on port 4460`; nessuna finestra nera di console; l'app è un processo indipendente (**chiudi OBS dal gestore attività: l'app resta in esecuzione**, il presenter continua con STIMATO).
+
+### P3 — Credenziali senza configurazione
+Elimina `settings.json` dell'app, riavvia tutto. Atteso: nel log di OBS `obs-websocket settings delivered to the app (… password=<secret>)`, in `GET /api/obs/status` `connected`; **la password non compare mai** nel log di OBS né nei log dell'app. Cambia la password in OBS (Strumenti → Impostazioni server WebSocket): entro 10 s l'app si ricollega da sola. Server WebSocket spento: il pannello dice come attivarlo. Password sbagliata inserita a mano nell'app: `auth_failed`, nessuna tempesta di tentativi (vedi sezione 10).
+
+### P4 — Hotkey
+In OBS Impostazioni → Tasti scelta rapida compaiono 18 voci «OBS Live Clock: …». Assegna F13 a «CLEAR», F14 a «NEXT», un tasto a «Messaggio 1», chiudi e riapri OBS: le assegnazioni restano. Con una puntata caricata: «Messaggio 1» invia il primo messaggio predefinito entro 500 ms; **NEXT una volta** mostra nel dock «PREMI DI NUOVO NEXT PER CONFERMARE» e non fa nulla; entro 1 s una seconda pressione esegue; dopo 1 s torna al primo stato; due pressioni a meno di 120 ms non confermano. Stream Deck (plugin ufficiale OBS) che attiva la stessa hotkey funziona allo stesso modo. Con l'app spenta premere un tasto non blocca OBS (nessun rallentamento dell'interfaccia).
+
+### P5 — Kiosk sul secondo monitor
+Con due monitor: nella vista estesa, pannello «MONITOR CONDUTTORE», scegli il secondo schermo, spunta «Apri il monitor automaticamente», Salva, Apri. Atteso: il presenter in schermo intero **sul monitor scelto**, mai sul principale; scollega il monitor scelto e premi Riapri: stato «schermo non trovato: non apro nulla». Chiudi la finestra a mano: si riapre dopo 2 s; chiudila 5 volte di fila: si ferma («fermato dopo troppe riaperture») e non ricompare finché non premi Apri. Con schermi a scala diversa (125 % / 100 %) verifica la posizione; se sbaglia, imposta una posizione fissa in `settings.json`. **Da provare anche su macOS e Linux (R4): non verificato.**
+
+### P6 — OBS cade durante la live
+Con la live in corso uccidi OBS dal gestore attività. Atteso: il presenter continua a contare con l'etichetta STIMATO entro 2 s; riavviando OBS il plugin non lancia una seconda app (un solo processo `node`), consegna di nuovo le credenziali e l'app si riallinea.
+
+### P7 — App remota
+Impostazioni del plugin (Strumenti → OBS Live Clock…): «App su un altro computer», indirizzo `http://<pc>:4460`. Atteso: il pannello punta a quell'indirizzo, il plugin non avvia nulla e non consegna credenziali; un indirizzo non valido tiene aperta la finestra con un messaggio.
+
+### P8 — Versioni non compatibili
+Con un'app a protocollo diverso (modifica temporanea di `PROTOCOL_VERSION`): banner rosso nel pannello e riga nel log di OBS, nessuna consegna di credenziali, nessun avvio di una seconda app.

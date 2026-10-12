@@ -149,3 +149,22 @@ logica degli `ack` e le guardie in `server/src/api/ws.ts`. Restano:
 
 - Nessun controllo visivo in un browser reale: il CSS dell'editor è collegato in `main.tsx` ma non è mai stato guardato. L'interfaccia è coperta solo dai test jsdom e dal test di integrazione sul server.
 - Il Task 18 (Playwright) è rimandato, come per il Piano 4.
+
+## Residui del Piano 6 (accettati, minori)
+
+- **Non verificato fuori da Windows.** Build e test C++ su macOS e Linux (primo controllo: la CI), cartelle di installazione, `--kiosk` e posizionamento multi-monitor su macOS e Linux (R4), Wayland (pannello di ripiego).
+- **Coordinate dei monitor.** Il plugin invia la geometria logica di Qt più `devicePixelRatio`; Chrome potrebbe interpretare `--window-position` in pixel fisici con schermi a scala diversa. Rimedio già disponibile: posizione fissa in `settings.json`.
+- **Primo avvio del pannello con un profilo CEF nuovo.** Il pannello mostrava la pagina del logo di OBS e restava lì; oggi naviga di nuovo 1,5 s dopo la prima visualizzazione. Causa non nota.
+- **OBS 30 e 31 non eseguiti.** L'ABI del pannello è confrontato con l'header di obs-browser dei tag 30.0.0, 32.2.2 e 33.0.0-rc1, non provato a runtime. OBS 33 non provato.
+- **Hotkey con Playlist Deck.** Playlist Deck registra le sue hotkey senza ricaricare le assegnazioni salvate nel profilo (libobs non lo fa per le hotkey dei plugin): verificare se ha lo stesso problema.
+- **`launch.json`** lo scrive l'installer (Piano 7); oggi a mano. Il processo dell'app eredita l'ambiente di OBS: da controllare con il runtime Node del Piano 7.
+- **Altri:** il plugin controlla la salute ogni 5 s e rilancia al massimo 3 volte per sessione; l'elenco schermi salvato è usato come ultimo noto dopo un riavvio e corretto appena il plugin riferisce; il pannello browser non si ricarica se la porta cambia a OBS aperto oltre il normale `setURL`.
+
+### Residui accettati dalla revisione (Piano 6)
+
+- **Finestra della conferma hotkey: 2 s nel plugin contro 1 s nel server (T6).** Il plugin scarta le pressioni più vecchie di 2 s, il server conferma entro 1 s: due pressioni a circa 1,4 s di distanza possono ancora arrivare ravvicinate al server ed essere contate come conferma. Accettato: la finestra reale è quella del server, che è quella testata.
+- **Chiusura del plugin: i worker vengono attesi sul thread dell'interfaccia (T15).** Allo spegnimento di OBS l'join dei thread di lavoro avviene sul thread UI: al più qualche secondo, accettato per non aggiungere complessità.
+- **Route del kiosk non autenticate in LAN.** `POST /api/kiosk/{start,stop,restart}` (e `GET /api/kiosk`) non richiedono il token: con l'accesso LAN attivo chiunque in LAN può aprire o chiudere il monitor del conduttore. Accettato: l'accesso LAN è già un'opzione esplicita con avviso.
+- **Reverse proxy sulla stessa macchina.** Un reverse proxy in esecuzione sull'host fa arrivare a `PUT /api/settings` un `remoteAddress` di loopback, aggirando il controllo che limita la modifica di `kiosk.browserPath` alle richieste locali. Accettato: minaccia locale, non di rete.
+- **Build macOS e Linux verificate solo dalla CI.** Non esistono ancora verifiche a runtime su macOS e Linux: la CI compila e fa girare i test unitari C++, nient'altro.
+- **Reset del `LaunchPolicy` in stato Running.** Un riavvio del `LaunchPolicy` mentre è già in stato Running salta la conferma delle 4 mancate risposte prima di considerare l'app caduta. Accettato: caso raro, l'effetto è un rilancio in più.

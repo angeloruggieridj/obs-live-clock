@@ -68,6 +68,20 @@ What it does:
 
 **Playlist files.** The file import reads the three formats the Playlist Deck exporter writes — JSON (`duration` in milliseconds, `-1` when unknown), CSV (`title,path,duration_ms`) and M3U (`#EXTM3U` + `#EXTINF:<seconds>,<title>` + path) — with absolute or portable (relative) paths.
 
+## OBS plugin
+
+The `plugin/` folder holds the OBS plugin (C++17, CMake, Qt 6): it shows the dock, starts the app when it is not running, hands it the obs-websocket credentials without any configuration, turns OBS hotkeys into app commands and reports the monitors for the kiosk. The app also works without it.
+
+```bash
+bash plugin/scripts/verify.sh          # C++ unit tests (no OBS needed): PASS cpp=… py=…
+bash plugin/scripts/setup-obs-dev.sh   # once, Windows only: OBS dev tree into plugin/.deps (5-10 min, ~1 GB)
+bash plugin/scripts/build-plugin.sh    # builds obs-live-clock.dll (+ olc-cli)
+```
+
+macOS and Linux are built by CI (`.github/workflows/ci.yml`). The plugin needs OBS 30 or newer. Copy the built `obs-live-clock.dll` to `C:\ProgramData\obs-studio\plugins\obs-live-clock\` and to `...\obs-live-clock\bin\64bit\`, then tick **Docks → OBS Live Clock**. Until the installer exists (Plan 7) tell the plugin how to start the app with `launch.json` in the data folder: `{"command": "<executable>", "args": [], "cwd": "<folder>"}` (no secrets in `args`), or set the command in Tools → OBS Live Clock…. The plugin settings (local or remote server, launch command, auto start) live in `plugin_config/obs-live-clock/settings.json` of OBS's config folder. Hotkeys appear in OBS Settings → Hotkeys as "OBS Live Clock: …" (18 slots; the emergency ones — NEXT, PREV, ±time, MANUAL/AUTO — need a second press within one second).
+
+**Kiosk.** `settings.json` of the app may hold `"kiosk": {"enabled": true, "screen": {"kind": "name", "name": "<monitor>"}, "restart": true}` (`kind` is `primary`, `name` or `position` with `x`, `y`; optional `browserPath`). The extended view has a panel to choose the monitor from the list OBS reported and to open or close the window.
+
 ## Development
 
 Requirements: Node.js 24, pnpm (via `corepack enable`).

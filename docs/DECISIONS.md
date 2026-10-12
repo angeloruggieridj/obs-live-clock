@@ -284,3 +284,17 @@ La parte TypeScript è organizzata come workspace. Il prodotto ha una sola versi
 - Il percorso **pointer/touch** non è coperto dai test automatici (jsdom non ha layout): si verifica a mano (controllo E2 del piano di test). Residuo nel `BACKLOG`.
 - Una modifica altrui può sfuggire per **fino a 10 s** (finestra del polling). Accettabile con un solo regista in regia; se non bastasse, in v1.x si aggiunge una versione/ETag.
 - I **formati di import** vivono in `shared/` e si testano in Node; il server non legge playlist.
+
+---
+
+## DT-12 · Plugin: pannello browser tramite l'API di obs-browser, hotkey caricate dal plugin, kiosk con limiti
+
+**Data:** 2026-10-12 · **Stato:** accettata
+
+**Decisione.**
+1. **Dock.** Il plugin trova il modulo `obs-browser` a runtime (`obs_get_module`, `os_dlsym`), usa `obs_browser_create_qcef` (versione pannello ≥ 3) e registra il widget con `obs_frontend_add_dock_by_id` in `obs_module_post_load`. L'header di obs-browser (GPL-2.0-only) non viene copiato: le dichiarazioni sono scritte dall'ordine delle funzioni virtuali e un controllo di CI lo confronta con l'upstream. Senza pannelli (Wayland, obs-browser assente) il pannello mostra l'indirizzo e un pulsante «Apri nel browser».
+2. **Hotkey.** Il plugin carica da sé le assegnazioni salvate da OBS in `basic.ini` `[Hotkeys]`; i nomi di registrazione sono congelati. La conferma della doppia pressione sta nel server (puro, testato), con deduplica per `(session, seq)` e distanza minima di 120 ms; le richieste non vengono mai ritentate.
+3. **Kiosk.** Mai su un monitor diverso da quello indicato; riapertura con pause crescenti, al massimo 4 volte in 10 minuti, poi «sospeso» finché l'operatore preme Apri.
+4. **Contratto plugin-app.** `plugin/contract/plugin-contract.json` è letto dai test di entrambe le parti. `launch.json` nella cartella dati dice al plugin come avviare l'app (lo scrive l'installer).
+
+**Conseguenze.** Due thread di lavoro nel plugin (nessuna chiamata di rete sul thread dell'interfaccia di OBS). La CI compila il plugin su tre sistemi con l'albero di sviluppo di OBS costruito dai sorgenti.

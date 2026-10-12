@@ -77,8 +77,8 @@ obs-live-clock/
 | **Avvio app** | All'evento `OBS_FRONTEND_EVENT_FINISHED_LOADING` interroga `GET http://127.0.0.1:<port>/api/health`. Se l'app non risponde, la avvia con `QProcess::startDetached` (percorso da installazione o impostazioni) e riprova il controllo con backoff fino a 10 s. |
 | **Compatibilità** | `/api/health` restituisce `{ version, protocol }`. Se il protocollo non è compatibile, compare un avviso nel dock e nel log di OBS. |
 | **Credenziali** (DT-5) | Legge la configurazione di obs-websocket (abilitato, porta, auth, password) **[V: posizione per versione di OBS]** e il token da `<dati app>/secret.token`. Poi esegue `POST /api/internal/obs-credentials`. Rilancia la stessa chiamata quando il controllo di salute rileva un riavvio dell'app (cambio di `instanceId`). |
-| **Dock** | Registra un dock con browser CEF (API di obs-browser, `obs_frontend_add_dock_by_id`) **[V: API disponibile in OBS 30+]** che punta a `/dock`. Se CEF non è disponibile, mostra un messaggio con l'URL da aprire nel browser. |
-| **Hotkey** (DT-9) | `obs_hotkey_register_frontend` per gli slot fissi. Alla pressione esegue `POST /api/internal/hotkey { slot }`. |
+| **Dock** | Registra un dock con browser CEF (API di obs-browser, `obs_frontend_add_dock_by_id`) che punta a `/dock`. Se CEF non è disponibile, mostra un messaggio con l'URL da aprire nel browser. (verificato in OBS 32.2.2: DT-12) |
+| **Hotkey** (DT-9) | `obs_hotkey_register_frontend` per gli slot fissi. Alla pressione esegue `POST /api/internal/hotkey { slot }`. Le assegnazioni dei tasti le carica il plugin dal profilo (DT-12). Ogni pressione parte su un thread separato, mai ritentata. |
 | **Schermi** | Elenco `QGuiApplication::screens()` (nome, geometria, principale), inviato con `POST /api/internal/screens` all'avvio e a ogni cambio. |
 | **Modalità remota** | Nelle impostazioni del plugin: `server = locale | remoto (URL)`. In modalità remota non avvia l'app, non consegna credenziali e punta il dock all'URL remoto. |
 | **Chiusura di OBS** | Non ferma l'app: è un processo indipendente (SPEC §15). |
@@ -286,7 +286,9 @@ Gli schemi zod sono in `shared/protocol` e vengono validati su entrambi i lati. 
 | `GET /api/obs/scenes` | Scene e gruppi, per l'editor |
 | `GET /api/deck/items` | Elementi della playlist corrente, per l'editor |
 | `POST /api/messages/send` · `/clear` | Endpoint pubblico per Stream Deck, Companion e script |
-| `GET/PUT /api/settings` | Impostazioni (credenziali OBS per la modalità remota: solo scrittura, mai restituite) |
+| `GET/PUT /api/settings` | Impostazioni del kiosk (solo `kiosk`; `browserPath` modificabile solo da loopback) |
+| `GET /api/hotkeys/pending` | Ultima hotkey d'emergenza in attesa di conferma (DT-9), per il dock |
+| `GET /api/kiosk` · `POST /api/kiosk/{start,stop,restart}` | Stato e comandi del monitor conduttore |
 | `POST /api/internal/*` | Solo loopback + bearer: `obs-credentials`, `hotkey`, `screens` |
 
 **L'import avviene nel client:** `GET /api/deck/items` oppure il testo del file letto dal browser e interpretato da `shared/playlist/parse` (JSON, CSV, M3U). Non c'è un endpoint di import lato server.
@@ -334,6 +336,7 @@ Per lo sviluppo si usa **`pnpm dev`** (simulatore OBS, server e Vite insieme).
 ## 9. Kiosk
 - Rilevamento del browser per piattaforma, in quest'ordine: Chrome, Edge, Chromium, Brave. È possibile indicare un percorso personalizzato nelle impostazioni.
 - Comando: `--app=http://127.0.0.1:<port>/presenter --kiosk --user-data-dir=<dati app>/kiosk-profile --window-position=<x>,<y> --no-first-run --disable-translate --autoplay-policy=no-user-gesture-required`.
+- Se lo schermo scelto non è nell'elenco il kiosk non parte (`screen_missing`); la riapertura ha pause 2, 5, 15, 30 s e si ferma dopo 4 riaperture in 10 minuti. Endpoint: `GET /api/kiosk`, `POST /api/kiosk/{start,stop,restart}`, `GET /api/screens`.
 - Lo schermo di destinazione viene scelto nelle impostazioni dall'elenco inviato dal plugin (§3). Senza plugin si usa uno schermo fisso configurato a mano.
 - Il processo del browser è sorvegliato: se viene chiuso per errore, l'app lo riapre (opzione attiva di default) **[V: comportamento di `--kiosk` su macOS e Linux]**.
 
@@ -377,12 +380,12 @@ I criteri di accettazione AC1–AC12 della SPEC diventano scenari automatici dov
 | # | Rischio / verifica | Mitigazione |
 |---|---|---|
 | R1 | Posizione della configurazione di obs-websocket che cambia tra le versioni di OBS | Il plugin legge entrambe le posizioni. Fallback: inserimento manuale |
-| R2 | API per il dock CEF da plugin (OBS 30+) | Spike iniziale. Fallback: guida "Custom Browser Dock" |
+| R2 | API per il dock CEF da plugin (OBS 30+) | risolto in 32.2.2, da provare su 30/31 |
 | R3 | `MediaInputActionTriggered` non copre pausa e seek fatti dalla UI | Interrogazione di `GetMediaInputStatus` a 4 Hz sui media visibili |
 | R4 | Kiosk su macOS e Linux (posizionamento sullo schermo giusto) | Spike. Fallback: finestra `--app` a schermo intero manuale |
 | R5 | Notarizzazione su macOS | Account Apple Developer. Fallback: istruzioni per lo sblocco manuale |
 | R6 | Deriva del timer JS e throttling delle schede in background | I client usano ancoraggi e l'ora del server, non timer cumulativi. Il presenter è in primo piano (kiosk) |
-| R7 | Conflitto di porta | Porta configurabile. Il plugin la legge da `<dati app>/runtime.json` |
+| R7 | Conflitto di porta | Porta configurabile. Il plugin la legge da `<dati app>/runtime.json`, che ora contiene anche `version` e `protocol` |
 
 ---
 
