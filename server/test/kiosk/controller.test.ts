@@ -124,6 +124,15 @@ describe('KioskController start', () => {
     t.time.advance(60_000);
     expect(t.spawned).toHaveLength(1);
   });
+
+  it('starting again tears down the window the first start opened (no orphaned kiosk)', async () => {
+    const t = setup();
+    await t.kiosk.start();
+    await t.kiosk.start();
+    expect(t.spawned[0]!.proc.killed).toBe(true);
+    expect(t.spawned).toHaveLength(2);
+    expect(t.kiosk.status()).toMatchObject({ state: 'running', pid: 1001 });
+  });
 });
 
 describe('KioskController supervision (never fight the operator)', () => {
@@ -247,6 +256,21 @@ describe('KioskController follows the monitors', () => {
     expect(t.spawned).toHaveLength(1);
     expect(t.kiosk.status().state).toBe('running');
   });
+
+  it('a flapping monitor cannot reopen the window without limit', async () => {
+    const t = setup();
+    await t.kiosk.start();
+    for (let i = 0; i < 10; i++) {
+      t.setScreens([main, { ...tv, x: 1920 + i * 640 }]);
+      t.kiosk.onScreensChanged();
+      await flush();
+    }
+    expect(t.kiosk.status().state).toBe('suspended');
+    expect(t.spawned).toHaveLength(5);
+    t.time.advance(60 * 60_000);
+    await flush();
+    expect(t.spawned).toHaveLength(5);
+  });
 });
 
 describe('KioskController settings', () => {
@@ -267,5 +291,49 @@ describe('KioskController settings', () => {
     const b = t.kiosk.restart();
     await Promise.all([a, b]);
     expect(t.spawned).toHaveLength(1);
+  });
+
+  it('a settings save does not reopen a kiosk the operator stopped', async () => {
+    const t = setup();
+    await t.kiosk.start();
+    t.kiosk.stop();
+    expect(t.kiosk.status().state).toBe('stopped');
+    await t.kiosk.applySettings({ enabled: true, screen: { kind: 'primary' }, restart: true });
+    expect(t.spawned).toHaveLength(1);
+    expect(t.kiosk.status().state).toBe('stopped');
+  });
+
+  it('a settings save does not reopen a suspended kiosk', async () => {
+    const t = setup();
+    await t.kiosk.start();
+    for (let i = 0; i < 4; i++) {
+      t.time.advance(20_000);
+      t.spawned.at(-1)!.proc.exit(0);
+      t.time.advance(40_000);
+      await flush();
+    }
+    t.time.advance(20_000);
+    t.spawned.at(-1)!.proc.exit(0);
+    expect(t.kiosk.status().state).toBe('suspended');
+    await t.kiosk.applySettings({ enabled: true, screen: { kind: 'primary' }, restart: true });
+    expect(t.spawned).toHaveLength(5);
+    expect(t.kiosk.status().state).toBe('suspended');
+  });
+
+  it('a kiosk-relevant change while running moves the window to the new monitor', async () => {
+    const t = setup();
+    await t.kiosk.start();
+    await t.kiosk.applySettings({ enabled: true, screen: { kind: 'primary' }, restart: true });
+    expect(t.spawned[0]!.proc.killed).toBe(true);
+    expect(t.spawned).toHaveLength(2);
+    expect(t.spawned[1]!.args).toContain('--window-position=16,16');
+  });
+
+  it('a settings save that changes nothing leaves the running kiosk alone', async () => {
+    const t = setup();
+    await t.kiosk.start();
+    await t.kiosk.applySettings({ enabled: true, screen: { kind: 'name', name: 'DISPLAY2' }, restart: true });
+    expect(t.spawned).toHaveLength(1);
+    expect(t.spawned[0]!.proc.killed).toBe(false);
   });
 });

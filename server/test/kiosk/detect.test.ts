@@ -62,4 +62,12 @@ describe('detectBrowser', () => {
     expect(await detectBrowser(d, 'E:/mine/chrome.exe')).toEqual({ kind: 'custom', path: 'E:/mine/chrome.exe' });
     expect(await detectBrowser(d, 'E:/typo/chrome.exe')).toBeNull();
   });
+
+  it('surrounding quotes and spaces in the override are trimmed', async () => {
+    const d = deps({ files: ['C:\\Program Files\\Mine\\chrome.exe'] });
+    expect(await detectBrowser(d, '  "C:\\Program Files\\Mine\\chrome.exe"  ')).toEqual({
+      kind: 'custom',
+      path: 'C:\\Program Files\\Mine\\chrome.exe',
+    });
+  });
 });

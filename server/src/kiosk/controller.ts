@@ -4,7 +4,7 @@ import type { DetectedBrowser } from './detect';
 import { buildKioskArgs, choosePlacement, type Placement } from './placement';
 import { RestartPolicy } from './restart-policy';
 import type { ScreenInfo } from './screens';
-import type { KioskSettings } from './settings';
+import type { KioskScreen, KioskSettings } from './settings';
 
 export interface ExitInfo {
   code: number | null;
@@ -51,6 +51,23 @@ export interface KioskStatus {
   screen: string | null;
 }
 
+/** States where a window is up, or about to be: only these may be moved by a settings save. */
+function isRunning(state: KioskState): boolean {
+  return state === 'running' || state === 'restarting';
+}
+
+function screenChanged(a: KioskScreen, b: KioskScreen): boolean {
+  if (a.kind !== b.kind) return true;
+  if (a.kind === 'name' && b.kind === 'name') return a.name !== b.name;
+  if (a.kind === 'position' && b.kind === 'position') return a.x !== b.x || a.y !== b.y;
+  return false;
+}
+
+/** The settings that change the command line of the running window (TECH-DESIGN §9). */
+function relevantChanged(a: KioskSettings, b: KioskSettings): boolean {
+  return a.browserPath !== b.browserPath || screenChanged(a.screen, b.screen);
+}
+
 /**
  * Keeps the presenter window open on the right monitor, and gets out of the way when it should. It never opens the
  * window on a monitor other than the one configured (screen_missing / waiting_for_screens instead), restarts a
@@ -88,9 +105,10 @@ export class KioskController {
     };
   }
 
-  /** Boot, or the operator's Start: a fresh start with a clean restart history. */
+  /** Boot, or the operator's Start: a fresh start with a clean restart history and no leftover window. */
   async start(): Promise<void> {
     this.policy.reset();
+    this.teardown();
     await this.launch();
   }
 
@@ -101,18 +119,29 @@ export class KioskController {
   }
 
   async restart(): Promise<void> {
-    this.teardown();
     await this.start();
   }
 
+  /**
+   * A settings save. It must never fight the operator: we only move a window that is already up, and a save that
+   * does not touch a kiosk-relevant field changes nothing. A brand new "enabled" is the one case where the
+   * operator is explicitly asking for the kiosk, so that still starts it.
+   */
   async applySettings(settings: KioskSettings): Promise<void> {
+    const previous = this.settings;
     this.settings = settings;
     if (!settings.enabled) {
       this.teardown();
       this.state = 'disabled';
       return;
     }
-    await this.restart();
+    if (!previous.enabled) {
+      await this.start();
+      return;
+    }
+    if (!isRunning(this.state) || !relevantChanged(previous, settings)) return;
+    this.teardown();
+    await this.launch();
   }
 
   /** The monitor list changed: retry what was waiting for it, and follow a monitor that moved. */
@@ -126,9 +155,25 @@ export class KioskController {
       const next = choosePlacement(this.settings.screen, this.deps.screens());
       if (next.ok && (next.x !== this.placement.x || next.y !== this.placement.y || next.width !== this.placement.width || next.height !== this.placement.height)) {
         this.deps.log('the kiosk monitor moved: reopening the presenter there');
-        void this.restart();
+        this.reopenForScreens();
       }
     }
+  }
+
+  /**
+   * The monitor moved: reopen there, but count it against the same restart limit as a crash. A display that keeps
+   * re-negotiating (dock, KVM, projector) must not be able to reopen the window forever.
+   */
+  private reopenForScreens(): void {
+    const now = this.deps.clock.now();
+    if (!this.policy.allowRestart(now)) {
+      this.teardown();
+      this.state = 'suspended';
+      this.deps.log('the kiosk monitor keeps moving: not reopening it (press Start to try again)');
+      return;
+    }
+    this.teardown();
+    void this.launch();
   }
 
   /** Application shutdown: close the browser we opened and never restart it. */
