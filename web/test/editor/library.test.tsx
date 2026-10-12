@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-import { fireEvent, screen, within } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { ApiError } from '../../src/core/http';
 import { LibraryPanel } from '../../src/editor/library/LibraryPanel';
@@ -144,5 +144,89 @@ describe('LibraryPanel', () => {
     });
     await user.click(screen.getByRole('button', { name: 'Carica per la live Solo Futsal · 12/10/2026' }));
     expect((await screen.findByTestId('lib-status')).textContent).toContain('Rundown con errori');
+  });
+
+  it('does not open the same document twice while the first open is running', async () => {
+    const { api } = await setup();
+    const release = api.hold('getDoc');
+    const name = within(screen.getByTestId('fmt-solo-futsal')).getByRole('button', { name: 'Solo Futsal' });
+    fireEvent.click(name);
+    fireEvent.click(name);
+    expect(api.count('getDoc')).toBe(1);
+    await act(async () => {
+      release();
+    });
+  });
+
+  it('lets the director retry after a failed create instead of disabling Crea forever', async () => {
+    const { api, user } = await setup();
+    api.failNext('createEpisode', new ApiError(500, 'boom'));
+    await user.click(screen.getByRole('button', { name: 'Nuova puntata Solo Futsal' }));
+    await user.click(within(screen.getByRole('dialog', { name: 'Nuova puntata' })).getByRole('button', { name: 'Crea' }));
+    expect((await screen.findByTestId('lib-status')).textContent).toContain('Operazione non riuscita');
+    const retry = within(screen.getByRole('dialog', { name: 'Nuova puntata' }));
+    expect((retry.getByRole('button', { name: 'Crea' }) as HTMLButtonElement).disabled).toBe(false);
+    await user.click(retry.getByRole('button', { name: 'Crea' }));
+    expect(await screen.findByTestId('ep-solo-futsal-2026-10-20')).toBeTruthy();
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('clears a stale status when a later operation succeeds', async () => {
+    const { api, user } = await setup();
+    api.failNext('createFormat', new ApiError(409, 'exists'));
+    await user.click(screen.getByRole('button', { name: 'Nuovo format' }));
+    await user.type(screen.getByRole('textbox', { name: 'Nome' }), 'Altro{Enter}');
+    expect((await screen.findByTestId('lib-status')).textContent).toContain('Esiste già');
+    await user.click(screen.getByRole('button', { name: 'Duplica Solo Futsal' }));
+    await screen.findByTestId('fmt-solo-futsal-copia');
+    expect(screen.getByTestId('lib-status').textContent).not.toContain('Esiste già');
+  });
+
+  it('reports the successful load even when a follow-up list refresh would fail', async () => {
+    const { api, user } = await setup();
+    api.failNext('listFormats', new ApiError(500, 'boom'));
+    await user.click(screen.getByRole('button', { name: 'Carica per la live Solo Futsal · 12/10/2026' }));
+    expect((await screen.findByTestId('lib-status')).textContent).toContain('Puntata caricata per la live');
+  });
+
+  it('blocks edits while the open episode is on air', async () => {
+    const api = new FakeEditorApi();
+    api.formats.set('solo-futsal', sampleFormat());
+    api.episodes.set(EP, sampleEpisode());
+    api.live = { episodeId: EP, phase: 'live' };
+    await renderWithSession(<LibraryPanel now={NOW} />, { api, open: { kind: 'episode', id: EP } });
+    await screen.findByTestId(`ep-${EP}`);
+    const names = [
+      'Nuovo format',
+      'Rinomina Solo Futsal',
+      'Duplica Solo Futsal',
+      'Elimina Solo Futsal',
+      'Nuova puntata Solo Futsal',
+      'Carica per la live Solo Futsal · 12/10/2026',
+    ];
+    for (const name of names) expect((screen.getByRole('button', { name }) as HTMLButtonElement).disabled, name).toBe(true);
+  });
+
+  it('blocks edits while another document is loading', async () => {
+    const api = new FakeEditorApi();
+    api.formats.set('solo-futsal', sampleFormat());
+    api.formats.set('altro', { ...sampleFormat(), id: 'altro', name: 'Altro' });
+    api.episodes.set(EP, sampleEpisode());
+    const { user } = await renderWithSession(<LibraryPanel now={NOW} />, { api, open: { kind: 'format', id: 'solo-futsal' } });
+    await screen.findByTestId('fmt-solo-futsal');
+    const release = api.hold('getDoc');
+    await user.click(within(screen.getByTestId('fmt-altro')).getByRole('button', { name: 'Altro' }));
+    expect((screen.getByRole('button', { name: 'Rinomina Solo Futsal' }) as HTMLButtonElement).disabled).toBe(true);
+    await act(async () => {
+      release();
+    });
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Rinomina Solo Futsal' }) as HTMLButtonElement).disabled).toBe(false));
+  });
+
+  it('renders the open-page links after the format and episode sections', async () => {
+    await setup();
+    const nav = screen.getByRole('navigation', { name: 'Apri' });
+    const formats = screen.getByRole('heading', { name: 'FORMAT' });
+    expect((formats.compareDocumentPosition(nav) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0).toBe(true);
   });
 });
