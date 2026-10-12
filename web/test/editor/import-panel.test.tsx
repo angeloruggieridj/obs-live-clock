@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-import { screen, within } from '@testing-library/react';
+import { act, screen, within } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
+import type { EditorDoc } from '../../src/editor/api/editor-api';
 import { ImportPanel } from '../../src/editor/import/ImportPanel';
+import { convertBlock } from '../../src/editor/model/ops';
 import { FakeEditorApi, renderWithSession, sampleEpisode } from '../support/editor';
 
 const FORMAT = { kind: 'format', id: 'solo-futsal' } as const;
@@ -88,6 +90,32 @@ describe('deck source', () => {
     expect(media(session, 'b1').map((e: { title: string }) => e.title)).toEqual(['Servizio 1', 'A']);
     expect(media(session, 'b2').map((e: { title: string }) => e.title)).toEqual(['Servizio 2', 'B']);
   });
+
+  it('reports a deck with no items instead of appearing to do nothing', async () => {
+    const { user } = await setup((a) => {
+      a.deck = { state: 'ok', items: [] };
+    });
+    await user.click(screen.getByRole('button', { name: 'Leggi playlist' }));
+    expect(await screen.findByText('0 servizi trovati')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /^Importa/ })).toBeNull();
+  });
+
+  it('falls back to a valid studio block when the chosen target is no longer one (never claims nothing was added)', async () => {
+    const { session, user } = await setup((a) => {
+      a.deck = DECK;
+    });
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Blocco di destinazione' }), 'b2');
+    await user.click(screen.getByRole('button', { name: 'Leggi playlist' }));
+    expect(await screen.findByText('2 servizi trovati')).toBeTruthy();
+    // b2 stops being a studio block while the panel stays open (timeline edit, another tab).
+    await act(async () => {
+      session.apply(convertBlock<EditorDoc>('b2', 'break'));
+    });
+    expect(session.store.getSnapshot().doc?.blocks.find((b) => b.id === 'b2')?.kind).toBe('break');
+    await user.click(screen.getByRole('button', { name: 'Importa 2 servizi' }));
+    expect(screen.getByTestId('imp-result').textContent).toBe('Aggiunti 2 · già presenti 0 · senza durata 1');
+    expect(media(session, 'b3').map((e: { title: string }) => e.title)).toEqual(['Nuovo 1', 'Ignoto']);
+  });
 });
 
 describe('file source', () => {
@@ -130,6 +158,19 @@ describe('file source', () => {
     await user.upload(screen.getByLabelText('Scegli file playlist'), file(text, name));
     expect((await screen.findByRole('status')).textContent).toContain(message);
     expect(screen.queryByRole('button', { name: /^Importa/ })).toBeNull();
+  });
+
+  it('lets the same file be chosen again (the input is cleared after a read)', async () => {
+    const { user } = await setup();
+    const input = screen.getByLabelText('Scegli file playlist');
+    let reads = 0;
+    input.addEventListener('change', () => {
+      reads += 1;
+    });
+    const f = file(JSON.stringify({ version: 1, name: 'P', items: [{ path: 'D:/m/a.mp4', title: 'A', duration: 1000 }] }), 'p.json');
+    await user.upload(input, f);
+    await user.upload(input, f);
+    expect(reads).toBe(2);
   });
 });
 

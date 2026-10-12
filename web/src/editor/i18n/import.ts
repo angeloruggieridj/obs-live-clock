@@ -26,6 +26,7 @@ export const IT_IMPORT = {
   'import.result': 'Aggiunti {added} · già presenti {existing} · senza durata {unknown}',
   'import.nothingNew': 'Nessun servizio nuovo: tutti già presenti',
   'import.noStudio': 'Nessun blocco studio',
+  'import.targetGone': 'Il blocco di destinazione non esiste più: scegline un altro',
   'import.readFailed': 'Impossibile leggere il file',
 } as const;
 
@@ -56,5 +57,6 @@ export const EN_IMPORT: Record<keyof typeof IT_IMPORT, string> = {
   'import.result': 'Added {added} · already there {existing} · no duration {unknown}',
   'import.nothingNew': 'Nothing new: all items are already in the rundown',
   'import.noStudio': 'No studio block',
+  'import.targetGone': 'The target block no longer exists: choose another',
   'import.readFailed': 'The file could not be read',
 };
