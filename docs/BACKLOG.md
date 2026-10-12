@@ -127,3 +127,25 @@ logica degli `ack` e le guardie in `server/src/api/ws.ts`. Restano:
 
 - Il Task 16 (Playwright) è stato saltato per scelta. Va eseguito prima del primo test su una TV vera.
 - I controlli su TV e AC10 (cifre del contatore ≥ 20% dell'altezza) non sono stati fatti in un browser reale. Le misure del piano sono state prese su schermate a 1080p e 4:3.
+
+## Residui del Piano 5 (accettati, minori)
+
+**Editor e sessione**
+
+- Se una `PUT` arriva al server ma la risposta si perde, il nuovo tentativo può rilevare un falso conflitto. Si risolve con "tieni la mia" o "prendi la loro". Rimedio economico: considerare nessun conflitto una copia remota uguale a quella locale.
+- Con evento `playlist-changed` attivo (plugin ≥ 1.4.0), la consegna della playlist dopo il caricamento di una puntata si appoggia a `resync()` al caricamento. Il test dell'adapter copre solo la modalità a polling. Va verificato con OBS reale che `ObsService` chiami `resync()` al caricamento.
+- `seal()` a ogni avvio di salvataggio divide in due passi di annullamento una raffica continua più lunga di `maxWait` (circa 1,5 s).
+- Durante un conflitto in sospeso lo stato mostra `saving`. Il banner nella shell dipende da `snapshot.conflict`.
+- Non sono testati: il rifiuto di "carica per la live" con un conflitto in sospeso e `open()` nello stesso caso.
+- `Autosave.flush()` in stato di errore non riattiva il timer di backoff. Oggi la sessione protegge i punti di chiamata.
+
+**Parser delle playlist**
+
+- Una virgoletta non chiusa nel CSV inghiotte il resto del file.
+- Un `#extinf` in minuscolo viene ignorato.
+- Il chiamante deve limitare la dimensione del file.
+
+**Verifiche non ancora fatte**
+
+- Nessun controllo visivo in un browser reale: il CSS dell'editor è collegato in `main.tsx` ma non è mai stato guardato. L'interfaccia è coperta solo dai test jsdom e dal test di integrazione sul server.
+- Il Task 18 (Playwright) è rimandato, come per il Piano 4.
