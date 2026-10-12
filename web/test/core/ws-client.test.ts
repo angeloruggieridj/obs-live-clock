@@ -263,12 +263,54 @@ describe('LiveClient', () => {
     last().drop();
     time.advance(500);
     welcome('i-1');
+    // Every close drops the old samples (an old minimum-RTT sample may be a lie after a suspend): even the same
+    // server instance is unsynced until a fresh pong arrives on the new connection.
+    expect(client.getSnapshot().synced).toBe(false);
+    last().receive({ type: 'time.pong', t0: 1_500, serverWall: 5_000_000 });
     expect(client.getSnapshot().synced).toBe(true);
     last().drop();
     time.advance(1_000);
     welcome('i-2');
     expect(client.getSnapshot().synced).toBe(false);
     expect(client.serverNow()).toBeNull();
+  });
+
+  it('adopts the shifted server clock after a reconnect across a long gap', () => {
+    const { client, last, welcome, time } = setup('presenter');
+    client.start();
+    welcome('i-1');
+    time.advance(40);
+    last().receive({ type: 'time.pong', t0: 1_000, serverWall: 5_000_000 }); // offset 4_998_980
+    expect(client.serverNow()).toBe(5_000_020);
+    last().drop();
+    time.advance(500); // the server clock has moved on by the time the client is back
+    welcome('i-1');
+    expect(client.getSnapshot().synced).toBe(false);
+    time.advance(40);
+    last().receive({ type: 'time.pong', t0: 1_540, serverWall: 9_000_000 });
+    expect(client.serverNow()).toBe(9_000_020);
+  });
+
+  it('replaces the ping timers on a second welcome instead of leaking a loop', () => {
+    const { client, last, welcome, time } = setup('presenter');
+    client.start();
+    welcome(); // ping at 1000, burst at 1250/1500/1750, loop at 6000
+    time.advance(250); // 1250: the second burst ping
+    expect(last().sentOfType('time.ping')).toHaveLength(2);
+    last().receive({ ...WELCOME }); // a second welcome on the same connection
+    expect(last().sentOfType('time.ping')).toHaveLength(3);
+    time.advance(5_000); // 6250
+    // 3 so far + burst at 1500/1750/2000 + the single 5 s loop tick at 6250
+    expect(last().sentOfType('time.ping')).toHaveLength(7);
+  });
+
+  it('closes the socket with 4001 when the server reports a protocol mismatch', () => {
+    const { client, last, welcome } = setup('presenter');
+    client.start();
+    welcome();
+    last().receive({ type: 'error', id: null, code: 'protocol_mismatch', message: 'Protocol mismatch' });
+    expect(client.getSnapshot()).toMatchObject({ connection: 'incompatible', problem: 'protocol_mismatch' });
+    expect(last().closed).toEqual({ code: 4001, reason: 'protocol_mismatch' });
   });
 
   it('notifies subscribers only on real changes', () => {

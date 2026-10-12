@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import { describe, expect, it } from 'vitest';
-import { RECONNECT_MAX_MS, reconnectDelay } from '../../src/core/backoff';
+import { RECONNECT_BASE_MS, RECONNECT_MAX_MS, reconnectDelay } from '../../src/core/backoff';
 import { ClockSync } from '../../src/core/clock-sync';
 import { parseParams } from '../../src/core/params';
 
@@ -76,6 +76,18 @@ describe('reconnectDelay', () => {
     expect(reconnectDelay(0, () => 0)).toBe(400);
     expect(reconnectDelay(0, () => 0.999)).toBe(600);
     expect(reconnectDelay(9, () => 0.999)).toBeLessThanOrEqual(RECONNECT_MAX_MS * 1.2);
+  });
+
+  it('stays a finite delay inside the jitter range when random or failures is not a number', () => {
+    expect(reconnectDelay(0, () => Number.NaN)).toBe(500); // jitter falls back to 1
+    for (const bad of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+      for (const random of [() => 0, () => 0.5, () => Number.NaN, () => Number.POSITIVE_INFINITY]) {
+        const delay = reconnectDelay(bad, random);
+        expect(Number.isFinite(delay), `${bad} ${random()}`).toBe(true);
+        expect(delay).toBeGreaterThanOrEqual(RECONNECT_BASE_MS * 0.8);
+        expect(delay).toBeLessThanOrEqual(RECONNECT_MAX_MS * 1.2);
+      }
+    }
   });
 });
 

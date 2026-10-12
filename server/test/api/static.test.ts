@@ -20,6 +20,7 @@ async function webRoot(pages: string[] = ['presenter', 'dock', 'control']): Prom
   }
   await mkdir(join(root, 'assets'), { recursive: true });
   await writeFile(join(root, 'assets', 'presenter-abc123.js'), 'console.log(1)');
+  await writeFile(join(root, 'assets', '_helper-abc.js'), 'console.log(2)');
   await writeFile(join(root, 'assets', 'inter-latin-700-normal-x1.woff2'), Buffer.from([0x77, 0x4f, 0x46, 0x32]));
   await writeFile(join(root, 'secret.txt'), 'nope');
   return root;
@@ -60,6 +61,9 @@ describe('static web app', () => {
     expect(js.headers['content-type']).toBe('text/javascript; charset=utf-8');
     expect(js.headers['cache-control']).toBe('public, max-age=31536000, immutable');
     expect(js.body).toBe('console.log(1)');
+    const helper = await a.inject({ method: 'GET', url: '/assets/_helper-abc.js' });
+    expect(helper.statusCode).toBe(200);
+    expect(helper.body).toBe('console.log(2)');
     const font = await a.inject({ method: 'GET', url: '/assets/inter-latin-700-normal-x1.woff2' });
     expect(font.headers['content-type']).toBe('font/woff2');
     const head = await a.inject({ method: 'HEAD', url: '/presenter' });
@@ -67,7 +71,7 @@ describe('static web app', () => {
     expect(head.body).toBe('');
   });
 
-  it('refuses traversal, sub-paths and unknown assets with 404', async () => {
+  it('refuses traversal, sub-paths, Windows device names and unknown assets with 404', async () => {
     const a = await app(await webRoot());
     for (const url of [
       '/assets/missing.js',
@@ -76,11 +80,16 @@ describe('static web app', () => {
       '/assets/a/b.js',
       '/assets/.hidden',
       '/assets/..%5Csecret.txt',
+      '/assets/a%5Cb',
+      '/assets/con.js',
+      '/assets/NUL.txt',
     ]) {
       const res = await a.inject({ method: 'GET', url });
       expect(res.statusCode, url).toBe(404);
-      expect(res.json()).toEqual({ error: 'not_found' });
+      expect(res.json(), url).toEqual({ error: 'not_found' });
     }
+    // Fastify normalises this one to /x before routing; it is still refused with a 404.
+    expect((await a.inject({ method: 'GET', url: '/assets/../x' })).statusCode).toBe(404);
   });
 
   it('answers 503 with build instructions when the app is not built', async () => {

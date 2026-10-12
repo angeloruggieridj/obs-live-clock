@@ -5,7 +5,9 @@ import type { FastifyInstance, FastifyReply } from 'fastify';
 
 export const WEB_PAGES = ['presenter', 'dock', 'control'] as const;
 
-const ASSET_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+const ASSET_NAME = /^[A-Za-z0-9_][A-Za-z0-9._-]*$/;
+/** Windows reserved device names: a valid asset name on paper, but not a real file on the build host. */
+const WINDOWS_RESERVED = /^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\.|$)/i;
 const NOT_BUILT = 'OBS Live Clock web app is not built. Run: pnpm --filter @olc/web build';
 const MIME: Record<string, string> = {
   '.js': 'text/javascript; charset=utf-8',
@@ -55,7 +57,7 @@ export function registerStatic(app: FastifyInstance, opts: { root: string | null
 
   app.get<{ Params: { '*': string } }>('/assets/*', async (req, reply) => {
     const name = req.params['*'];
-    if (opts.root === null || !ASSET_NAME.test(name)) return notFound(reply);
+    if (opts.root === null || !ASSET_NAME.test(name) || WINDOWS_RESERVED.test(name)) return notFound(reply);
     try {
       const body = await readFile(join(opts.root, 'assets', name));
       return reply

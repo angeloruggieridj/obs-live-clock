@@ -230,6 +230,9 @@ export class LiveClient<R extends ClientRole> implements LiveStore<R> {
     if (socket !== this.socket) return;
     this.socket = null;
     this.welcomed = false;
+    // Every close drops the clock estimate: after a suspend an old minimum-RTT sample can survive and show a wrong
+    // offset as if it were fresh. serverNow() returns null until fresh pongs arrive on the new connection.
+    this.clock.reset();
     this.clearConnectionTimers();
     this.rejectPending('disconnected');
     if (this.stopped || this.snap.connection === 'incompatible') return;
@@ -280,6 +283,11 @@ export class LiveClient<R extends ClientRole> implements LiveStore<R> {
       case 'error': {
         if (msg.code === 'protocol_mismatch') {
           this.update({ connection: 'incompatible', problem: msg.code });
+          try {
+            this.socket?.close(CLOSE_PROTOCOL_MISMATCH, 'protocol_mismatch');
+          } catch (err) {
+            this.report(err);
+          }
           return;
         }
         const pending = msg.id === null ? undefined : this.take(msg.id);
@@ -308,6 +316,8 @@ export class LiveClient<R extends ClientRole> implements LiveStore<R> {
     this.welcomed = true;
     this.viewSinceWelcome = false;
     this.lastRev = 0;
+    // A second welcome on one connection must replace the timers, never run a second ping loop.
+    this.clearConnectionTimers();
     this.update({ connection: 'open', serverVersion, synced: this.clock.synced });
     this.ping();
     for (let i = 1; i < PING_BURST; i++) {
