@@ -47,6 +47,7 @@ describe('ScreenRegistry', () => {
     r.set([a, b]);
     expect(r.get()).toEqual({ screens: [a, b], live: true });
     expect(heard).toHaveBeenCalledTimes(1);
+    await r.flush();
     expect(s.saved).toEqual([[a, b]]);
   });
 
@@ -59,6 +60,7 @@ describe('ScreenRegistry', () => {
     r.onChange(heard);
     r.set([a, b]);
     expect(heard).not.toHaveBeenCalled();
+    await r.flush();
     expect(s.saved).toHaveLength(1);
   });
 
@@ -79,7 +81,7 @@ describe('ScreenRegistry', () => {
     const r = new ScreenRegistry({ load: async () => [], save: async () => Promise.reject(new Error('disk full')) }, report);
     await r.init();
     r.set([a]);
-    await new Promise((res) => setTimeout(res, 0));
+    await r.flush();
     expect(report).toHaveBeenCalled();
     expect(r.get().screens).toEqual([a]);
   });

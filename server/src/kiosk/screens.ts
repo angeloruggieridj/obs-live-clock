@@ -35,6 +35,8 @@ export class ScreenRegistry {
   private screens: ScreenInfo[] = [];
   private live = false;
   private readonly listeners = new Set<() => void>();
+  /** Saves queue in order behind this: a report cannot rename the file out of order. */
+  private pending: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly store: ScreenStore,
@@ -62,8 +64,16 @@ export class ScreenRegistry {
     if (!changed) return;
     const listChanged = !same(this.screens, screens);
     this.screens = screens.map((s) => ({ ...s }));
-    if (listChanged) this.store.save(this.screens).catch((err: unknown) => this.report(err));
+    if (listChanged) {
+      const snapshot = this.screens.map((s) => ({ ...s }));
+      this.pending = this.pending.then(() => this.store.save(snapshot)).catch((err: unknown) => this.report(err));
+    }
     for (const listener of this.listeners) listener();
+  }
+
+  /** Resolves once every save queued so far has finished (or been reported). Shutdown awaits this. */
+  flush(): Promise<void> {
+    return this.pending;
   }
 
   onChange(listener: () => void): () => void {
