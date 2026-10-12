@@ -53,7 +53,13 @@ export function ImportPanel() {
 
   const studios = doc === null ? [] : doc.blocks.filter((b) => b.kind === 'studio');
   const selectedStudio = selection.blockId !== null && studios.some((b) => b.id === selection.blockId) ? selection.blockId : null;
-  const targetBlockId = chosenBlock ?? selectedStudio ?? studios[0]?.id ?? '';
+  // A target chosen earlier is only kept while it is still a studio block in the current document: a block that was
+  // deleted or converted away must fall back, or the plan would fail and read as "nothing new" (review Scenario A).
+  const chosenStudio = chosenBlock !== null && studios.some((b) => b.id === chosenBlock) ? chosenBlock : null;
+  const targetBlockId = chosenStudio ?? selectedStudio ?? studios[0]?.id ?? '';
+  const placement: PlacementMode = mode === 'sequence' ? { kind: 'sequence' } : { kind: 'append', blockId: targetBlockId };
+  // The placement error is surfaced at render time, so a target that cannot take the items disables Import and says so.
+  const placementError = doc === null || rows === null || rows.length === 0 ? null : planPlacement(doc, rows, placement).error;
 
   const readDeck = async () => {
     setResult('');
@@ -103,8 +109,12 @@ export function ImportPanel() {
 
   const importItems = () => {
     if (doc === null || rows === null || rows.length === 0) return;
-    const placement: PlacementMode = mode === 'sequence' ? { kind: 'sequence' } : { kind: 'append', blockId: targetBlockId };
     const plan = planPlacement(doc, rows, placement);
+    // A failed placement must never be reported as "all items already present" (review Scenario A).
+    if (plan.error !== null) {
+      setResult('');
+      return;
+    }
     session.apply(importEdit<EditorDoc>(plan));
     setResult(plan.adds.length === 0
       ? t('import.nothingNew')
@@ -126,12 +136,17 @@ export function ImportPanel() {
             aria-label={t('import.chooseFile')}
             accept=".json,.csv,.m3u,.m3u8,.txt"
             disabled={locked}
-            onChange={(e) => void readChosenFile(e.target.files?.[0])}
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              // Cleared so choosing the SAME file again still fires a change (review Scenario D).
+              e.target.value = '';
+              void readChosenFile(file);
+            }}
           />
         </label>
       </div>
 
-      {rows !== null && rows.length > 0 && (
+      {rows !== null && (
         <div className="imp-preview">
           <p>{t('import.found', { n: rows.length })}</p>
           <ul aria-label="Anteprima">
@@ -141,6 +156,7 @@ export function ImportPanel() {
                 <li key={i} data-testid={`imp-row-${i}`} className="imp-row">
                   <span className="imp-item-title">{row.title}</span>
                   <span className="imp-path" title={row.path}>{row.path}</span>
+                  {/* Both checks are needed: a deck item keeps origin 'deck' even when its duration is unknown (-1). */}
                   {row.durationMs < 0 || row.origin === 'unknown' ? (
                     <>
                       <span className="is-warn">—</span>
@@ -178,9 +194,10 @@ export function ImportPanel() {
       </div>
 
       {studios.length === 0 && <p className="is-warn">{t('import.noStudio')}</p>}
+      {placementError === 'not_a_studio_block' && <p className="is-warn">{t('import.targetGone')}</p>}
 
       {rows !== null && rows.length > 0 && (
-        <button type="button" className="ed-btn" onClick={importItems} disabled={locked || studios.length === 0}>
+        <button type="button" className="ed-btn" onClick={importItems} disabled={locked || studios.length === 0 || placementError !== null}>
           {t('import.importN', { n: rows.length })}
         </button>
       )}
