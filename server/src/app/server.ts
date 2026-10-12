@@ -9,17 +9,25 @@ import { registerHttp } from '../api/http';
 import { registerInternal } from '../api/internal';
 import { registerObsRoutes } from '../api/obs';
 import { registerStatic } from '../api/static';
+import { registerSystem } from '../api/system';
 import { registerWs } from '../api/ws';
 import { systemClock, systemScheduler, type Clock, type Scheduler } from '../clock/clock';
+import { HotkeyService } from '../hotkeys/hotkey-service';
+import { KioskController, type KioskDeps } from '../kiosk/controller';
+import { detectBrowser } from '../kiosk/detect';
+import { nodeDetectDeps, nodeSpawn } from '../kiosk/node-kiosk';
+import { ScreenRegistry, ScreensBody } from '../kiosk/screens';
 import { createObsClient, type ObsClient } from '../obs/client';
 import type { ObsCredentials } from '../obs/connection';
 import { ObsService } from '../obs/obs-service';
 import { LiveJournal } from '../persistence/journal';
+import { readJson, writeJsonAtomic } from '../persistence/json-file';
 import { DocumentRepository, type InvalidDocument } from '../persistence/repository';
 import { SnapshotStore } from '../persistence/snapshot-store';
 import { LiveRuntime } from '../runtime/live-runtime';
 import { dataPaths } from './paths';
 import { ensureSecretToken } from './secret';
+import { Settings, SettingsHolder } from './settings';
 import { APP_VERSION } from './version';
 
 export interface ServerOptions {
@@ -45,12 +53,20 @@ export interface ServerOptions {
   restrictAcl?: (path: string) => Promise<void>;
   /** Built web app directory; null (default) answers 503 on the pages. */
   webRoot?: string | null;
+  /** The settings the app runs with (main.ts loads them from settings.json). Defaults to all-defaults. */
+  settings?: Settings;
+  /** Test seam: replaces how the kiosk browser is detected and started. The defaults are the real ones. */
+  kioskDeps?: Partial<Pick<KioskDeps, 'spawn' | 'detect'>>;
 }
 
 export interface BuiltServer {
   app: FastifyInstance;
   runtime: LiveRuntime;
   instanceId: string;
+  /** Not started by buildServer: main.ts starts it once the app is listening, when settings.kiosk.enabled. */
+  kiosk: KioskController;
+  hotkeys: HotkeyService;
+  screens: ScreenRegistry;
 }
 
 /**
@@ -101,6 +117,37 @@ export async function buildServer(opts: ServerOptions): Promise<BuiltServer> {
   if (opts.obsCredentials !== undefined) obs.setCredentials(opts.obsCredentials);
 
   const instanceId = randomUUID();
+
+  // Plugin and kiosk (Plan 6): hotkeys with their confirmation rule, the monitor list, the kiosk browser.
+  const settings = opts.settings ?? Settings.parse({});
+  const settingsHolder = new SettingsHolder(paths.settings, settings);
+  const hotkeys = new HotkeyService({ runtime, clock });
+  const screens = new ScreenRegistry(
+    {
+      load: async () => (await readJson(paths.screens, ScreensBody))?.screens ?? [],
+      save: (list) => writeJsonAtomic(paths.screens, { screens: list }),
+    },
+    (err) => app.log.warn({ error: err instanceof Error ? err.message : String(err) }, 'Screen list file problem'),
+  );
+  await screens.init();
+  const detectDeps = nodeDetectDeps();
+  const kiosk = new KioskController(
+    {
+      clock,
+      scheduler,
+      spawn: opts.kioskDeps?.spawn ?? nodeSpawn,
+      detect: opts.kioskDeps?.detect ?? ((override) => detectBrowser(detectDeps, override)),
+      screens: () => {
+        const known = screens.get().screens;
+        return known.length > 0 ? known : null;
+      },
+      port: () => settings.port,
+      profileDir: paths.kioskProfile,
+      log: (message) => app.log.info(message),
+    },
+    settings.kiosk,
+  );
+  screens.onChange(() => kiosk.onScreensChanged());
   // Close live sockets with 1001 "going away" on shutdown (the plugin's default sends no code → clients see 1005).
   await app.register(websocket, {
     preClose(this: FastifyInstance, done: () => void) {
@@ -123,11 +170,13 @@ export async function buildServer(opts: ServerOptions): Promise<BuiltServer> {
     version,
     instanceId,
   });
-  registerInternal(app, { token: secret.token, obs });
+  registerInternal(app, { token: secret.token, obs, hotkeys, screens });
+  registerSystem(app, { settings: settingsHolder, hotkeys, screens, kiosk });
   registerObsRoutes(app, { obs, episodes, clock, scheduler });
   registerWs(app, { runtime, clock, version, instanceId, heartbeatMs: opts.heartbeatMs ?? 1_000 });
   registerStatic(app, { root: opts.webRoot ?? null });
   app.addHook('onClose', async () => {
+    kiosk.dispose(); // close the browser we opened, before anything else can delay it
     try {
       await withTimeout(obs.stop(), OBS_STOP_TIMEOUT_MS, clock, scheduler);
     } finally {
@@ -136,7 +185,7 @@ export async function buildServer(opts: ServerOptions): Promise<BuiltServer> {
       runtime.dispose();
     }
   });
-  return { app, runtime, instanceId };
+  return { app, runtime, instanceId, kiosk, hotkeys, screens };
 }
 
 /** Bounds on how long shutdown waits for OBS: a hung socket must not block flush/dispose forever. */

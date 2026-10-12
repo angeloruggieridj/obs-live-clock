@@ -17,7 +17,12 @@ function newObs(): { obs: Obs; setCredentials: ReturnType<typeof vi.fn> } {
 
 function makeApp(obs: Obs, logger: boolean | object = false): FastifyInstance {
   const app = Fastify({ logger: logger as never });
-  registerInternal(app, { token: TOKEN, obs });
+  registerInternal(app, {
+    token: TOKEN,
+    obs,
+    hotkeys: { press: vi.fn(() => ({ result: 'ignored', slot: 'clear', reason: 'no_episode' }) as const) },
+    screens: { set: vi.fn() },
+  });
   return app;
 }
 
