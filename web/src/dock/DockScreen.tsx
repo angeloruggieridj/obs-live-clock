@@ -4,6 +4,7 @@ import { ConnectionOverlay } from '../ui/ConnectionOverlay';
 import { Alerts } from '../ui/control/Alerts';
 import { CommandFeedback } from '../ui/control/CommandFeedback';
 import { EmergencyPanel } from '../ui/control/EmergencyPanel';
+import { HotkeyHint } from '../ui/control/HotkeyHint';
 import { MessagePanel } from '../ui/control/MessagePanel';
 import { StatusPanel } from '../ui/control/StatusPanel';
 import { useCommand } from '../ui/control/useCommand';
@@ -24,6 +25,7 @@ export function DockScreen({ api = defaultApi, search = typeof window === 'undef
   const commandsDisabled = snap.stale || !ready;
   return (
     <div className="dock">
+      <HotkeyHint api={api} />
       {ready && view === null ? (
         <section className="panel">
           <div className="no-episode">{t('noEpisode')}</div>
