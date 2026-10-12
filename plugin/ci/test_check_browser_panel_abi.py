@@ -3,7 +3,9 @@
 """Unit tests for check_browser_panel_abi.py, on the shapes the real header and our shim have."""
 from __future__ import annotations
 
+import os
 import unittest
+from unittest import mock
 
 import check_browser_panel_abi as abi
 
@@ -98,6 +100,33 @@ class Compare(unittest.TestCase):
         newer = UPSTREAM.replace("virtual void executeJavaScript(const std::string &script) = 0;",
                                  "virtual void executeJavaScript(const std::string &script) = 0;\n\tvirtual void brandNew() = 0;")
         self.assertEqual(len(abi.compare(OURS, newer)), 1)
+
+
+class _FakeResponse:
+    """Enough of an http.client.HTTPResponse for _fetch's context manager."""
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        return False
+
+    def read(self):
+        return b"{}"
+
+
+class Authorization(unittest.TestCase):
+    def _request(self):
+        with mock.patch.object(abi.urllib.request, "urlopen", return_value=_FakeResponse()) as urlopen:
+            abi._fetch("https://example.test/x")
+        return urlopen.call_args.args[0]
+
+    def test_sends_the_token_only_when_the_environment_sets_it(self):
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("GITHUB_TOKEN", None)
+            self.assertIsNone(self._request().get_header("Authorization"))
+        with mock.patch.dict(os.environ, {"GITHUB_TOKEN": "s3cret"}):
+            self.assertEqual(self._request().get_header("Authorization"), "Bearer s3cret")
 
 
 if __name__ == "__main__":

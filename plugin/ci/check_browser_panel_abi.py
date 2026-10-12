@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 import urllib.request
@@ -58,7 +59,13 @@ def compare(local: str, upstream: str) -> list[str]:
 
 
 def _fetch(url: str) -> str:
-    request = urllib.request.Request(url, headers={"User-Agent": "obs-live-clock-ci"})
+    headers = {"User-Agent": "obs-live-clock-ci"}
+    # GitHub's API rate-limits anonymous requests to 60/hour per IP, which shared runners exhaust. The token is
+    # only ever sent as a header; it is never printed or logged.
+    token = os.environ.get("GITHUB_TOKEN")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    request = urllib.request.Request(url, headers=headers)
     with urllib.request.urlopen(request, timeout=30) as response:
         return response.read().decode("utf-8")
 
