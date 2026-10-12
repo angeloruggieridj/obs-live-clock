@@ -309,7 +309,9 @@ describe('POST /api/obs/check', () => {
     });
     const res = await h.app.inject({ method: 'POST', url: '/api/obs/check', payload: { episodeId: 'ep-1' } });
     expect(res.statusCode).toBe(200);
-    expect(res.json().issues).toEqual([]);
+    expect(res.json().issues).toEqual([
+      { severity: 'warning', code: 'media_input_unverified', blockId: 'br1', message: expect.any(String) },
+    ]);
   });
 
   it('times out an unresponsive GetInputList and does not report media_input_missing', async () => {
@@ -324,7 +326,10 @@ describe('POST /api/obs/check', () => {
     expect(res.statusCode).toBe(200);
     const body = res.json();
     expect(body.connected).toBe(true);
-    expect(body.issues).toEqual([]);
+    expect(body.issues).toEqual([
+      { severity: 'warning', code: 'media_input_unverified', blockId: 'br1', message: expect.any(String) },
+    ]);
+    expect(body.issues.some((i: { code: string }) => i.code === 'media_input_missing')).toBe(false);
   });
 
   it('answers obs_not_connected only when OBS drops while reading inputs', async () => {

@@ -8,7 +8,8 @@ export type IssueCode =
   | 'scene_group_missing'
   | 'media_exceeds_block'
   | 'studio_below_threshold'
-  | 'scene_group_shared';
+  | 'scene_group_shared'
+  | 'media_duration_unknown';
 
 export interface Issue {
   severity: IssueSeverity;
@@ -43,6 +44,16 @@ export function validateRundown(r: Rundown): Issue[] {
     checkId(b.id, b.id);
     if (b.kind !== 'studio') continue;
     for (const e of b.elements) checkId(e.id, b.id);
+    for (const e of b.elements) {
+      if (e.kind === 'media' && e.durationSource === 'unknown') {
+        issues.push({
+          severity: 'warning',
+          code: 'media_duration_unknown',
+          blockId: b.id,
+          message: `Media "${e.title}" has no known duration`,
+        });
+      }
+    }
 
     if (!r.sceneGroups.some((g) => g.id === b.sceneGroupId)) {
       issues.push({

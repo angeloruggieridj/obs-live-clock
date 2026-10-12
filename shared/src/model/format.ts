@@ -54,6 +54,9 @@ export type MessagePreset = z.infer<typeof MessagePreset>;
 export const StudioElement = z.object({ id: Id, kind: z.literal('studio') });
 export type StudioElement = z.infer<typeof StudioElement>;
 
+export const DurationSource = z.enum(['deck', 'file', 'file_rounded', 'manual', 'unknown']);
+export type DurationSource = z.infer<typeof DurationSource>;
+
 export const MediaElement = z.object({
   id: Id,
   kind: z.literal('media'),
@@ -61,6 +64,7 @@ export const MediaElement = z.object({
   path: z.string().min(1),
   occurrence: z.number().int().nonnegative(),
   plannedDurationMs: DurationMs,
+  durationSource: DurationSource.optional(),
 });
 export type MediaElement = z.infer<typeof MediaElement>;
 

@@ -104,10 +104,13 @@ export function registerHttp(app: FastifyInstance, ctx: HttpContext): void {
   });
 
   // Live
+  app.get('/api/live/status', async () => ({ episodeId: ctx.runtime.episodeId, phase: ctx.runtime.phase }));
   app.post('/api/live/load', async (req, reply) => {
     const { episodeId } = LoadBody.parse(req.body);
     const episode = await ctx.episodes.get(episodeId);
     if (episode === undefined) return notFound(reply);
+    const errors = validateRundown(episode).filter((i) => i.severity === 'error');
+    if (errors.length > 0) return reply.code(409).send({ error: 'rundown_invalid', issues: errors });
     await ctx.runtime.load(episode);
     return { episodeId };
   });
