@@ -15,6 +15,12 @@ import { parseDuration } from './duration-input';
 export function TextField(props: {
   label: string;
   value: string;
+  /**
+   * Identity of the field's source (e.g. the block id). When it changes the local text is re-synchronised from
+   * `value` even if `value` itself did not change, so switching block never leaves the previous block's text on
+   * screen when the two blocks share the same canonical value.
+   */
+  resetKey?: string;
   /** Returns true when the store accepted the edit; false reverts the field to `value`. */
   onCommit: (raw: string) => boolean;
   validate?: (raw: string) => boolean;
@@ -28,7 +34,7 @@ export function TextField(props: {
   useEffect(() => {
     setText(props.value);
     setInvalid(false);
-  }, [props.value]);
+  }, [props.value, props.resetKey]);
   const commit = () => {
     if (props.validate !== undefined && !props.validate(text)) {
       setInvalid(true);
@@ -64,7 +70,14 @@ export function TextField(props: {
   );
 }
 
-function FormInput(props: { label: string; value: string; disabled?: boolean; onChange: (value: string) => void }) {
+function FormInput(props: {
+  label: string;
+  value: string;
+  disabled?: boolean;
+  invalid?: boolean;
+  invalidMessage?: string;
+  onChange: (value: string) => void;
+}) {
   return (
     <div className="ed-field">
       <span className="ed-field-label">{props.label}</span>
@@ -74,8 +87,10 @@ function FormInput(props: { label: string; value: string; disabled?: boolean; on
         aria-label={props.label}
         value={props.value}
         disabled={props.disabled}
+        aria-invalid={props.invalid === true ? 'true' : undefined}
         onChange={(e) => props.onChange(e.target.value)}
       />
+      {props.invalid === true && props.invalidMessage !== undefined ? <span className="ed-error">{props.invalidMessage}</span> : null}
     </div>
   );
 }
@@ -110,24 +125,41 @@ export function ElementsList(props: { block: StudioBlock }) {
   const [title, setTitle] = useState('');
   const [path, setPath] = useState('');
   const [duration, setDuration] = useState('');
+  const [durationInvalid, setDurationInvalid] = useState(false);
+
+  // The add-item form must not carry one block's typing onto another: reset it when the selected block changes.
+  useEffect(() => {
+    setFormOpen(false);
+    setTitle('');
+    setPath('');
+    setDuration('');
+    setDurationInvalid(false);
+  }, [block.id]);
 
   const add = () => {
     const trimmed = path.trim();
     if (trimmed === '') return;
     const ms = parseDuration(duration);
+    // A non-empty duration that does not parse is a typo: flag it instead of silently recording an unknown item.
+    if (duration.trim() !== '' && ms === null) {
+      setDurationInvalid(true);
+      return;
+    }
+    setDurationInvalid(false);
     const occurrence = (doc?.blocks ?? []).reduce(
       (n, b) => (b.kind === 'studio' ? n + b.elements.filter((e) => e.kind === 'media' && e.path === trimmed).length : n),
       0,
     );
     const media: Omit<MediaElement, 'id'> =
       ms === null
-        ? { kind: 'media', title, path: trimmed, occurrence, plannedDurationMs: 0, durationSource: 'unknown' }
-        : { kind: 'media', title, path: trimmed, occurrence, plannedDurationMs: ms, durationSource: 'manual' };
+        ? { kind: 'media', title: title.slice(0, 200), path: trimmed, occurrence, plannedDurationMs: 0, durationSource: 'unknown' }
+        : { kind: 'media', title: title.slice(0, 200), path: trimmed, occurrence, plannedDurationMs: ms, durationSource: 'manual' };
     session.apply(addMedia(block.id, media));
     setFormOpen(false);
     setTitle('');
     setPath('');
     setDuration('');
+    setDurationInvalid(false);
   };
 
   return (
@@ -143,6 +175,7 @@ export function ElementsList(props: { block: StudioBlock }) {
               ) : (
                 <>
                   <TextField
+                    resetKey={el.id}
                     label={`${t('props.titleN')} ${n}`}
                     value={el.title}
                     disabled={disabled}
@@ -152,6 +185,7 @@ export function ElementsList(props: { block: StudioBlock }) {
                     {el.path}
                   </span>
                   <TextField
+                    resetKey={el.id}
                     label={`${t('props.durationN')} ${n}`}
                     value={el.durationSource === 'unknown' ? '' : durationText(el.plannedDurationMs)}
                     placeholder={t('props.unknownDash')}
@@ -208,7 +242,15 @@ export function ElementsList(props: { block: StudioBlock }) {
         <button type="button" className="ed-btn" disabled={disabled} onClick={() => session.apply(addStudioPart(block.id))}>
           {t('props.addStudioPart')}
         </button>
-        <button type="button" className="ed-btn" disabled={disabled} onClick={() => setFormOpen((v) => !v)}>
+        <button
+          type="button"
+          className="ed-btn"
+          disabled={disabled}
+          onClick={() => {
+            setFormOpen((v) => !v);
+            setDurationInvalid(false);
+          }}
+        >
           {t('props.addMedia')}
         </button>
       </div>
@@ -222,7 +264,17 @@ export function ElementsList(props: { block: StudioBlock }) {
         >
           <FormInput label={t('props.mediaTitle')} value={title} disabled={disabled} onChange={setTitle} />
           <FormInput label={t('props.mediaPath')} value={path} disabled={disabled} onChange={setPath} />
-          <FormInput label={t('props.mediaDuration')} value={duration} disabled={disabled} onChange={setDuration} />
+          <FormInput
+            label={t('props.mediaDuration')}
+            value={duration}
+            disabled={disabled}
+            invalid={durationInvalid}
+            invalidMessage={t('props.durationInvalid')}
+            onChange={(v) => {
+              setDuration(v);
+              setDurationInvalid(false);
+            }}
+          />
           <button type="button" className="ed-btn" disabled={disabled || path.trim() === ''} onClick={add}>
             {t('props.add')}
           </button>

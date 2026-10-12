@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-import { fireEvent, screen, within } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import type { StudioBlock } from '@olc/shared';
 import { PropertiesPanel } from '../../src/editor/props/PropertiesPanel';
@@ -174,5 +174,59 @@ describe('elements', () => {
     await user.type(screen.getByRole('textbox', { name: 'Percorso file' }), 'D:/x.mp4');
     await user.click(screen.getByRole('button', { name: 'Aggiungi' }));
     expect(blocks(session)[3]!.elements.at(-1)).toMatchObject({ plannedDurationMs: 0, durationSource: 'unknown' });
+  });
+});
+
+describe('selection isolation', () => {
+  it('resets a name edit when the next block has the same name', async () => {
+    const { session } = await setup('b1', (f) => {
+      f.blocks[2]!.name = f.blocks[0]!.name; // b2 shares b1's name
+    });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Nome' }), { target: { value: 'Modificato' } });
+    session.selection.select('b2');
+    await waitFor(() => {
+      expect((screen.getByRole('textbox', { name: 'Nome' }) as HTMLInputElement).value).toBe('Primo blocco');
+    });
+    expect(blocks(session)[2]!.name).toBe('Primo blocco');
+  });
+
+  it('resets a duration edit when the next block has the same duration', async () => {
+    const { session } = await setup('b1', (f) => {
+      f.blocks[2]!.durationMs = f.blocks[0]!.durationMs; // b2 shares b1's duration
+    });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Durata' }), { target: { value: '10:00' } });
+    session.selection.select('b2');
+    await waitFor(() => {
+      expect((screen.getByRole('textbox', { name: 'Durata' }) as HTMLInputElement).value).toBe('12:00');
+    });
+  });
+
+  it('closes and clears the add-item form when the block selection changes', async () => {
+    const { session, user } = await setup('b2');
+    await user.click(screen.getByRole('button', { name: 'Aggiungi servizio' }));
+    await user.type(screen.getByRole('textbox', { name: 'Percorso file' }), 'D:/a.mp4');
+    session.selection.select('b3');
+    await waitFor(() => {
+      expect(screen.queryByRole('textbox', { name: 'Percorso file' })).toBeNull();
+    });
+  });
+
+  it('flags an invalid add-item duration instead of adding an unknown item', async () => {
+    const { session, user } = await setup('b3');
+    await user.click(screen.getByRole('button', { name: 'Aggiungi servizio' }));
+    await user.type(screen.getByRole('textbox', { name: 'Percorso file' }), 'D:/x.mp4');
+    await user.type(screen.getByRole('textbox', { name: 'Durata servizio' }), '12:75');
+    await user.click(screen.getByRole('button', { name: 'Aggiungi' }));
+    expect(screen.getByText('Durata non valida (es. 12:30)')).toBeTruthy();
+    expect(blocks(session)[3]!.elements).toHaveLength(1);
+  });
+
+  it('clips an over-long add-item title to the model limit', async () => {
+    const { session, user } = await setup('b3');
+    await user.click(screen.getByRole('button', { name: 'Aggiungi servizio' }));
+    await user.type(screen.getByRole('textbox', { name: 'Percorso file' }), 'D:/x.mp4');
+    fireEvent.change(screen.getByRole('textbox', { name: 'Titolo servizio' }), { target: { value: 'x'.repeat(201) } });
+    await user.click(screen.getByRole('button', { name: 'Aggiungi' }));
+    expect((blocks(session)[3]!.elements.at(-1) as { title: string }).title).toHaveLength(200);
   });
 });
