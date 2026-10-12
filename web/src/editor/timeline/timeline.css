@@ -1,0 +1,101 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+.tl {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  gap: 6px;
+}
+
+.tl-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.tl-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.tl-readonly {
+  font-style: italic;
+}
+
+.tl-scroll {
+  position: relative;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.tl-track {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tl-block {
+  position: relative;
+  box-sizing: border-box;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 10px 4px 6px;
+  border: 1px solid #3a3a3a;
+  border-radius: 4px;
+  background: #1f1f1f;
+  cursor: grab;
+}
+
+.tl-block.is-selected {
+  outline: 2px solid #4c9aff;
+}
+
+.tl-block .is-warn {
+  color: #d8a100;
+}
+
+.tl-block .is-error {
+  color: #ff6b6b;
+}
+
+.tl-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tl-handle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 8px;
+  height: 100%;
+  cursor: col-resize;
+}
+
+.tl-drop {
+  position: absolute;
+  top: 0;
+  width: 2px;
+  height: 100%;
+  background: #4c9aff;
+  pointer-events: none;
+}
+
+.tl-empty {
+  margin: 0;
+  opacity: 0.7;
+}
+
+.tl-keys {
+  margin-top: 4px;
+  font-size: 0.85em;
+  opacity: 0.7;
+}
