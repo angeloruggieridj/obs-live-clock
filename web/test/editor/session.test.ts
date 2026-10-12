@@ -60,6 +60,35 @@ describe('open', () => {
     expect(session.getSnapshot().ref).toEqual(EPISODE);
     expect(session.store.getSnapshot().doc?.id).toBe('ep-2026-10-12');
   });
+
+  it('an edit during a slow open still saves the document on screen, not the one loading', async () => {
+    const { api, time, session } = setup();
+    await session.open(FORMAT);
+    const episodeName = api.episodes.get('ep-2026-10-12')!.name;
+    const release = api.hold('getDoc');
+    const opening = session.open(EPISODE);
+    await time.advance(0); // reach the held getDoc
+    expect(session.getSnapshot()).toMatchObject({ phase: 'loading', ref: FORMAT });
+    session.apply(renameDoc('Editato durante il caricamento'));
+    await time.advance(900);
+    expect(api.count('putDoc')).toBe(1);
+    expect(api.formats.get('solo-futsal')!.name).toBe('Editato durante il caricamento');
+    expect(api.episodes.get('ep-2026-10-12')!.name).toBe(episodeName);
+    release();
+    expect(await opening).toBe(true);
+    expect(session.getSnapshot().ref).toEqual(EPISODE);
+  });
+
+  it('a failed open keeps the previous document addressed and writable', async () => {
+    const { api, time, session } = setup();
+    await session.open(FORMAT);
+    expect(await session.open({ kind: 'format', id: 'nope' })).toBe(false);
+    expect(session.getSnapshot()).toMatchObject({ phase: 'error', error: 'not_found', ref: FORMAT });
+    expect(session.store.getSnapshot().doc?.id).toBe('solo-futsal');
+    session.apply(renameDoc('Nuovo nome'));
+    await time.advance(900);
+    expect(api.formats.get('solo-futsal')!.name).toBe('Nuovo nome');
+  });
 });
 
 describe('autosave through the session', () => {
@@ -189,6 +218,54 @@ describe('loadForLive', () => {
     api.failNext('loadLive', new TypeError('down'));
     expect(await session.loadForLive('ep-2026-10-12')).toEqual({ ok: false, reason: 'network' });
   });
+
+  it('does not cancel the pending retry when loading while the save is in error', async () => {
+    const { api, time, session } = setup();
+    await session.open(EPISODE);
+    api.failNext('putDoc', new TypeError('down'));
+    session.apply(renameDoc('Nuovo nome'));
+    await time.advance(900); // fails once: error, backoff armed
+    expect(session.autosave.getState()).toMatchObject({ kind: 'error' });
+    expect(await session.loadForLive('ep-2026-10-12')).toEqual({ ok: false, reason: 'unsaved' });
+    expect(api.count('loadLive')).toBe(0);
+    await time.advance(1_000); // the still-armed retry runs and saves
+    expect(session.autosave.getState().kind).toBe('clean');
+    expect(api.episodes.get('ep-2026-10-12')!.name).toBe('Nuovo nome');
+  });
+});
+
+describe('late save results', () => {
+  it('ignores a save that lands after forget()', async () => {
+    const { api, time, session } = setup();
+    await session.open(FORMAT);
+    const release = api.hold('putDoc');
+    session.apply(renameDoc('Nuovo nome'));
+    await time.advance(900); // the save is in flight
+    expect(session.autosave.getState().kind).toBe('saving');
+    session.forget();
+    api.failNext('putDoc', new TypeError('down'));
+    release();
+    await time.advance(0);
+    expect(session.getSnapshot()).toMatchObject({ ref: null, phase: 'idle' });
+    expect(session.autosave.getState().kind).toBe('clean');
+  });
+
+  it('ignores a save of the previous document that lands after a new open', async () => {
+    const { api, time, session } = setup();
+    await session.open(FORMAT);
+    const release = api.hold('putDoc');
+    session.apply(renameDoc('Nuovo nome'));
+    await time.advance(900); // the save is in flight
+    expect(session.autosave.getState().kind).toBe('saving');
+    const opening = session.open(EPISODE, { discard: true });
+    await time.advance(0); // the new document is open before the old save lands
+    expect(session.getSnapshot().ref).toEqual(EPISODE);
+    release();
+    expect(await opening).toBe(true);
+    await time.advance(0);
+    await session.checkExternal();
+    expect(session.getSnapshot().refreshed).toBe(0);
+  });
 });
 
 describe('external changes (another tab)', () => {
@@ -242,6 +319,55 @@ describe('external changes (another tab)', () => {
     release();
     await time.advance(0);
     expect(session.autosave.getState().kind).toBe('clean');
+  });
+
+  it('holds the save while a conflict is pending, so the newer server copy is not overwritten', async () => {
+    const { api, time, session } = setup();
+    await session.open(FORMAT);
+    session.apply(renameDoc('Mia modifica'));
+    api.formats.set('solo-futsal', { ...sampleFormat(), name: 'Loro modifica' });
+    await session.checkExternal();
+    expect(session.getSnapshot().conflict?.name).toBe('Loro modifica');
+    await time.advance(5_000); // well past the debounce
+    expect(api.formats.get('solo-futsal')!.name).toBe('Loro modifica');
+    expect(api.count('putDoc')).toBe(0);
+    expect(session.autosave.getState().kind).not.toBe('clean');
+    session.keepMine();
+    await time.advance(5_000);
+    expect(api.formats.get('solo-futsal')!.name).toBe('Mia modifica');
+    expect(session.autosave.getState().kind).toBe('clean');
+  });
+
+  it('take theirs while a save is held replaces the copy without writing', async () => {
+    const { api, time, session } = setup();
+    await session.open(FORMAT);
+    session.apply(renameDoc('Mia modifica'));
+    api.formats.set('solo-futsal', { ...sampleFormat(), name: 'Loro modifica' });
+    await session.checkExternal();
+    await time.advance(5_000);
+    expect(api.count('putDoc')).toBe(0);
+    session.takeTheirs();
+    await time.advance(5_000);
+    expect(session.store.getSnapshot().doc?.name).toBe('Loro modifica');
+    expect(api.count('putDoc')).toBe(0);
+    expect(api.formats.get('solo-futsal')!.name).toBe('Loro modifica');
+    expect(session.autosave.getState().kind).toBe('clean');
+  });
+
+  it('does not cancel the pending retry when keeping mine while the save is in error', async () => {
+    const { api, time, session } = setup();
+    await session.open(FORMAT);
+    api.failNext('putDoc', new TypeError('down'));
+    session.apply(renameDoc('Mia modifica'));
+    await time.advance(900); // fails once: error, backoff armed
+    expect(session.autosave.getState()).toMatchObject({ kind: 'error' });
+    api.formats.set('solo-futsal', { ...sampleFormat(), name: 'Loro modifica' });
+    await session.checkExternal();
+    expect(session.getSnapshot().conflict?.name).toBe('Loro modifica');
+    session.keepMine();
+    await time.advance(1_000); // the still-armed retry runs and saves
+    expect(session.autosave.getState().kind).toBe('clean');
+    expect(api.formats.get('solo-futsal')!.name).toBe('Mia modifica');
   });
 });
 

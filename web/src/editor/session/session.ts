@@ -46,6 +46,9 @@ export function stableStringify(v: unknown): string {
 
 const firstBlockId = (doc: EditorDoc): string | null => doc.blocks[0]?.id ?? null;
 
+/** The persisted identity of a document, taken from the document itself (never from a ref that may have moved on). */
+const docRef = (doc: EditorDoc): DocRef => ({ kind: 'formatId' in doc ? 'episode' : 'format', id: doc.id });
+
 export class EditorSession {
   readonly store = new DocumentStore<EditorDoc | null>(null);
   readonly selection = new SelectionStore();
@@ -55,6 +58,12 @@ export class EditorSession {
   /** The document as the server last confirmed it (loaded or saved). */
   private lastSaved: EditorDoc | null = null;
   private openToken = 0;
+  /**
+   * While a conflict is pending the save is held (no write) until the director chooses. The held save awaits this
+   * promise; `endConflictHold()` releases it whenever the conflict is resolved or the document is forgotten.
+   */
+  private conflictHold: Promise<void> | null = null;
+  private releaseConflictHold: (() => void) | null = null;
   private readonly offAutosave: () => void;
 
   constructor(
@@ -65,13 +74,29 @@ export class EditorSession {
     this.autosave = new Autosave(
       this.store,
       async (doc) => {
-        const ref = this.snap.ref;
-        if (doc === null || ref === null) return;
+        if (doc === null) return;
+        // The target comes from the document, so a save that started before open()/forget() moved on still writes to
+        // the document it captured (and a stale tab never overwrites the copy the conflict is showing).
+        const target = docRef(doc);
+        const token = this.openToken;
+        if (this.snap.conflict !== null) {
+          await this.holdForConflict();
+          // The conflict was resolved (or the session moved on) while we waited: only keepMine() ends up here with
+          // the same document still in the store, which is exactly the document that must now be written.
+          if (token !== this.openToken || this.snap.conflict !== null) return;
+          if (!Object.is(this.store.getSnapshot().doc, doc)) return; // resolved by takeTheirs()/discard, or edited since
+        }
+        let saved: EditorDoc;
         try {
-          this.lastSaved = await this.api.putDoc(doc, ref.kind);
+          saved = await this.api.putDoc(doc, target.kind);
         } catch (err) {
+          // A failure that lands after forget()/a different open() belongs to a document no one is looking at: drop it
+          // instead of lighting up the error state of the document that replaced it.
+          if (token !== this.openToken) return;
           throw err instanceof ApiError ? new SaveError(err.status, err.code) : err;
         }
+        if (token !== this.openToken) return; // late success: do not adopt it as lastSaved
+        this.lastSaved = saved;
       },
       timers,
       autosaveOptions,
@@ -94,6 +119,12 @@ export class EditorSession {
    */
   async open(ref: DocRef, opts: { discard?: boolean } = {}): Promise<boolean> {
     if (this.snap.ref !== null && !opts.discard) {
+      // A pending conflict must be resolved by the director first: flushing would either write the stale copy the
+      // conflict is warning about, or wait on the held save forever.
+      if (this.snap.conflict !== null) {
+        this.set({ blocked: true });
+        return false;
+      }
       // `flush()` while the save is in `error` would cancel the backoff retry and return without saving (Task 3),
       // so a refused switch must leave the pending retry running instead of calling it.
       if (this.autosave.getState().kind !== 'error') await this.autosave.flush();
@@ -104,7 +135,9 @@ export class EditorSession {
       }
     }
     const token = ++this.openToken;
-    this.set({ ref, phase: 'loading', error: null, lock: null, conflict: null, blocked: false });
+    // The ref and the store stay on the previous document until the new one is loaded, so an edit made while the load
+    // is in flight is still saved to the document on screen; a failed open then leaves that document addressed.
+    this.set({ phase: 'loading', error: null, blocked: false });
     try {
       const [doc, live] = await Promise.all([this.api.getDoc(ref), this.api.liveStatus().catch(() => null)]);
       if (token !== this.openToken) return false; // a newer open() won
@@ -113,7 +146,8 @@ export class EditorSession {
       this.autosave.markSaved();
       this.lastSaved = doc;
       this.selection.select(firstBlockId(doc));
-      this.set({ phase: 'ready', live, lock });
+      this.set({ ref, phase: 'ready', live, lock, conflict: null });
+      this.endConflictHold();
       return true;
     } catch (err) {
       if (token === this.openToken) this.set({ phase: 'error', error: err instanceof ApiError ? err.code : 'network' });
@@ -129,6 +163,7 @@ export class EditorSession {
     this.lastSaved = null;
     this.selection.select(null);
     this.set({ ref: null, phase: 'idle', error: null, lock: null, conflict: null, blocked: false });
+    this.endConflictHold();
   }
 
   apply(e: Edit<EditorDoc>): boolean {
@@ -192,6 +227,7 @@ export class EditorSession {
     this.autosave.markSaved();
     this.lastSaved = theirs;
     this.set({ conflict: null });
+    this.endConflictHold();
   }
 
   /** Keeps the local copy: from now on the server copy is the one the next save overwrites. */
@@ -200,6 +236,8 @@ export class EditorSession {
     if (theirs === null) return;
     this.lastSaved = theirs;
     this.set({ conflict: null });
+    // The held save (if any) is the one that must now write the local copy: release it before flushing.
+    this.endConflictHold();
     // As in open(): flush() in `error` would cancel the backoff retry, so leave the retry running.
     if (this.autosave.getState().kind !== 'error') void this.autosave.flush();
   }
@@ -211,6 +249,9 @@ export class EditorSession {
   async loadForLive(episodeId: string): Promise<LoadResult> {
     const ref = this.snap.ref;
     if (ref !== null && ref.kind === 'episode' && ref.id === episodeId) {
+      // An unresolved conflict means the local copy is not what the director confirmed: loading would run an older
+      // copy (and flushing would wait on the held save). The switch is refused.
+      if (this.snap.conflict !== null) return { ok: false, reason: 'unsaved' };
       // As in open(): flush() in `error` would cancel the backoff retry, so leave the retry running.
       if (this.autosave.getState().kind !== 'error') await this.autosave.flush();
       if (this.autosave.getState().kind !== 'clean') return { ok: false, reason: 'unsaved' };
@@ -228,10 +269,27 @@ export class EditorSession {
   dispose(): void {
     this.offAutosave();
     this.autosave.dispose();
+    this.endConflictHold();
   }
 
   private set(patch: Partial<SessionSnapshot>): void {
     this.snap = { ...this.snap, ...patch };
     for (const l of [...this.listeners]) l();
+  }
+
+  /** Returns the promise a held save awaits; created on first use until the conflict is resolved. */
+  private holdForConflict(): Promise<void> {
+    this.conflictHold ??= new Promise<void>((resolve) => {
+      this.releaseConflictHold = resolve;
+    });
+    return this.conflictHold;
+  }
+
+  /** Releases a held save. Callers clear `conflict` first, so the resumed save can tell what the director chose. */
+  private endConflictHold(): void {
+    const release = this.releaseConflictHold;
+    this.conflictHold = null;
+    this.releaseConflictHold = null;
+    release?.();
   }
 }
