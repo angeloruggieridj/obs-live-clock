@@ -7,8 +7,9 @@
  * obs-browser exports two C symbols from its module: obs_browser_create_qcef() returns a QCef*, a table of virtual
  * functions, and obs_browser_qcef_version_export() returns its version (3 in every OBS from 30.0 to 33.0-rc1).
  * obs-browser's header is not part of the OBS SDK, and it is GPL-2.0-only, so it is not copied: the declarations
- * below are written from the observable virtual-function ORDER, which is the whole ABI. tools/check-browser-panel-abi.py
- * (CI) compares this order with upstream's header so a future change cannot slip through.
+ * below are written from the observable virtual-function ORDER, which is the whole ABI. The checker
+ * plugin/ci/check_browser_panel_abi.py compares this order with upstream's header so a future change cannot slip
+ * through.
  *
  * NEVER reorder, insert or remove a virtual function here.
  */

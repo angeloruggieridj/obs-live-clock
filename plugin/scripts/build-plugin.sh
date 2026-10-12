@@ -4,7 +4,7 @@
 # Prints the path of the built module. The OBS glue has no unit tests: compiling and linking IS its automatic check.
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
-olc_is_windows || { echo "build-plugin.sh supports Windows only; macOS and Linux are built by CI." >&2; exit 2; }
+olc_is_windows || { echo "build-plugin.sh supports Windows only." >&2; exit 2; }
 deps_root="$OLC_DEPS_DIR"
 [ -f "$deps_root/env.sh" ] || { echo "run plugin/scripts/setup-obs-dev.sh first" >&2; exit 1; }
 # shellcheck disable=SC1091
