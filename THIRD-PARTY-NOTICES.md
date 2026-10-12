@@ -21,3 +21,11 @@ redistributed freely, including bundling and embedding it in software, as long
 as the font is not sold by itself and derivative works are not distributed
 under the font's Reserved Font Name. The full licence text and a FAQ are
 available at <https://openfontlicense.org>.
+
+## doctest (C++ test framework, plugin tests only)
+
+`plugin/third_party/doctest/doctest.h`, version **2.4.11**, Copyright (c) 2016-2023 Viktor Kirilov, **MIT** (SPDX: `MIT`). Used only to build the plugin's unit tests; not part of the shipped plugin. Licence text: `plugin/third_party/doctest/LICENSE.txt`.
+
+## nlohmann/json (C++ JSON library, linked into the plugin)
+
+`plugin/third_party/nlohmann/json.hpp`, version **3.11.3**, Copyright (c) 2013-2022 Niels Lohmann, **MIT** (SPDX: `MIT`). Linked into the OBS plugin to read and write JSON. Licence text: `plugin/third_party/nlohmann/LICENSE.MIT`.
