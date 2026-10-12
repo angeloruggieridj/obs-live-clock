@@ -158,7 +158,7 @@ logica degli `ack` e le guardie in `server/src/api/ws.ts`. Restano:
 - **OBS 30 e 31 non eseguiti.** L'ABI del pannello è confrontato con l'header di obs-browser dei tag 30.0.0, 32.2.2 e 33.0.0-rc1, non provato a runtime. OBS 33 non provato.
 - **Hotkey con Playlist Deck.** Playlist Deck registra le sue hotkey senza ricaricare le assegnazioni salvate nel profilo (libobs non lo fa per le hotkey dei plugin): verificare se ha lo stesso problema.
 - **`launch.json`** lo scrive l'installer (Piano 7); oggi a mano. Il processo dell'app eredita l'ambiente di OBS: da controllare con il runtime Node del Piano 7.
-- **Altri:** il plugin controlla la salute ogni 5 s e rilancia al massimo 3 volte per sessione; l'elenco schermi salvato è usato come ultimo noto dopo un riavvio e corretto appena il plugin riferisce; il pannello browser non si ricarica se la porta cambia a OBS aperto oltre il normale `setURL`.
+- **Altri:** il plugin controlla la salute ogni 5 s e rilancia al massimo 3 volte per sessione; l'elenco schermi salvato è mostrato come ultimo noto dopo un riavvio, ma la finestra non si apre mai da lì: monitor per nome e posizione fissa aspettano che il plugin riferisca la lista live di questa sessione (`waiting_for_screens`), mentre `primary` funziona anche senza plugin; il pannello browser non si ricarica se la porta cambia a OBS aperto oltre il normale `setURL`.
 
 ### Residui accettati dalla revisione (Piano 6)
 

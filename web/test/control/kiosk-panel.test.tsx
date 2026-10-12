@@ -47,6 +47,20 @@ describe('<KioskPanel>', () => {
     expect(button('Salva').disabled).toBe(true);
   });
 
+  it('Open and Reopen are not offered while the draft is unsaved: the server would use the old monitor', async () => {
+    await panel();
+    expect(button('Apri').disabled).toBe(false);
+    expect(button('Riapri').disabled).toBe(false);
+    fireEvent.change(select(), { target: { value: 'name:DISPLAY2' } });
+    expect(button('Apri').disabled).toBe(true);
+    expect(button('Riapri').disabled).toBe(true);
+    await act(async () => {
+      fireEvent.click(button('Salva'));
+    });
+    expect(button('Apri').disabled).toBe(false);
+    expect(button('Riapri').disabled).toBe(false);
+  });
+
   it('a configured monitor that is not connected stays visible and is marked, never silently swapped', async () => {
     await panel({ kioskConfig: async () => ({ enabled: true, screen: { kind: 'name', name: 'TV-SALA' }, restart: true }) });
     expect(select().value).toBe('name:TV-SALA');

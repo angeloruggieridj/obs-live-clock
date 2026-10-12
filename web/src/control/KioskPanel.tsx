@@ -115,10 +115,11 @@ export function KioskPanel({ api }: { api: ApiClient }) {
         <button type="button" disabled={!dirty} onClick={save}>
           {t('kioskSave')}
         </button>
-        <button type="button" onClick={act('start')}>
+        {/* The server opens from the SAVED settings, so while the draft is dirty Open/Reopen would suggest a monitor it will not use. */}
+        <button type="button" disabled={dirty} onClick={act('start')}>
           {t('kioskStart')}
         </button>
-        <button type="button" onClick={act('restart')}>
+        <button type="button" disabled={dirty} onClick={act('restart')}>
           {t('kioskRestartNow')}
         </button>
         <button type="button" onClick={act('stop')}>
