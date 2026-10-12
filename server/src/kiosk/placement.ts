@@ -25,11 +25,18 @@ function inside(screen: ScreenInfo): Placement {
  * Where to open the kiosk. The rule that matters on air: a screen the operator named is never replaced by another
  * one. If it is not in the list the answer is "screen_missing" (the caller shows a warning and does not launch),
  * because opening the presenter on the director's own monitor would cover the multiview.
+ *
+ * `live` says whether the list was reported by the plugin in this run. The remembered list is shown to the operator
+ * but never used to place a window: a monitor that has been unplugged since the last run would still be "in" it, and
+ * the presenter would open at stale coordinates. `primary` is the one target that needs no list at all.
  */
-export function choosePlacement(setting: KioskScreen, screens: readonly ScreenInfo[] | null): Placement {
+export function choosePlacement(setting: KioskScreen, screens: readonly ScreenInfo[] | null, live = true): Placement {
   const list = screens ?? [];
   switch (setting.kind) {
     case 'position': {
+      // A fixed position still needs the live geometry: before the plugin reports we cannot tell which monitor it
+      // lands on, and the remembered list may be from a different arrangement.
+      if (!live) return { ok: false, reason: 'waiting_for_screens' };
       const hit = list.find(
         (s) => setting.x >= s.x && setting.x < s.x + s.width && setting.y >= s.y && setting.y < s.y + s.height,
       );
@@ -43,7 +50,7 @@ export function choosePlacement(setting: KioskScreen, screens: readonly ScreenIn
       };
     }
     case 'name': {
-      if (list.length === 0) return { ok: false, reason: 'waiting_for_screens' };
+      if (!live || list.length === 0) return { ok: false, reason: 'waiting_for_screens' };
       const hit = list.find((s) => s.name === setting.name);
       return hit === undefined ? { ok: false, reason: 'screen_missing' } : inside(hit);
     }

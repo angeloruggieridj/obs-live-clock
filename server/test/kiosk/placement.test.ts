@@ -53,6 +53,15 @@ describe('choosePlacement', () => {
     });
   });
 
+  it('a remembered (not live) list never places a window: a named monitor waits for the plugin', () => {
+    expect(choosePlacement({ kind: 'name', name: tv.name }, [main, tv], false)).toEqual({ ok: false, reason: 'waiting_for_screens' });
+  });
+
+  it('a fixed position waits for the live list too, and opens once it arrives', () => {
+    expect(choosePlacement({ kind: 'position', x: 2000, y: 40 }, [main, tv], false)).toEqual({ ok: false, reason: 'waiting_for_screens' });
+    expect(choosePlacement({ kind: 'position', x: 2000, y: 40 }, [main, tv], true)).toMatchObject({ ok: true, width: 1920, height: 1080, screen: tv.name });
+  });
+
   it('primary uses the monitor flagged primary, or the origin when there is no list', () => {
     expect(choosePlacement({ kind: 'primary' }, [tv, main])).toMatchObject({ ok: true, screen: main.name });
     expect(choosePlacement({ kind: 'primary' }, null)).toMatchObject({
@@ -61,6 +70,8 @@ describe('choosePlacement', () => {
       y: WINDOW_INSET,
       width: null,
     });
+    // Without the plugin at all, primary still works: it needs no list.
+    expect(choosePlacement({ kind: 'primary' }, null, false)).toMatchObject({ ok: true, x: WINDOW_INSET, y: WINDOW_INSET, width: null });
   });
 });
 

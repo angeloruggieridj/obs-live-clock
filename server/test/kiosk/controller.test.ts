@@ -41,7 +41,8 @@ function setup(over: Partial<KioskSettings> = {}, opts: { screens?: ScreenInfo[]
       return proc;
     },
     detect: async () => browser,
-    screens: () => screens,
+    // A list in this harness means the plugin reported it; null means "no live list yet".
+    screens: () => ({ screens: screens ?? [], live: screens !== null }),
     port: () => 4460,
     profileDir: 'C:/d/kiosk-profile',
     log: (m) => logs.push(m),

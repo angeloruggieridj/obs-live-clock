@@ -3,7 +3,7 @@ import type { Clock, Scheduler } from '../clock/clock';
 import type { DetectedBrowser } from './detect';
 import { buildKioskArgs, choosePlacement, type Placement } from './placement';
 import { RestartPolicy } from './restart-policy';
-import type { ScreenInfo } from './screens';
+import type { ScreenSnapshot } from './screens';
 import type { KioskScreen, KioskSettings } from './settings';
 
 export interface ExitInfo {
@@ -24,7 +24,8 @@ export interface KioskDeps {
   scheduler: Scheduler;
   spawn(command: string, args: string[]): KioskProcess;
   detect(override: string | undefined): Promise<DetectedBrowser | null>;
-  screens(): ScreenInfo[] | null;
+  /** The registry snapshot: the list plus whether the plugin reported it in this run. */
+  screens(): ScreenSnapshot;
   port(): number;
   profileDir: string;
   log(message: string): void;
@@ -152,7 +153,8 @@ export class KioskController {
       return;
     }
     if (this.state === 'running' && this.placement !== null) {
-      const next = choosePlacement(this.settings.screen, this.deps.screens());
+      const known = this.deps.screens();
+      const next = choosePlacement(this.settings.screen, known.screens, known.live);
       if (next.ok && (next.x !== this.placement.x || next.y !== this.placement.y || next.width !== this.placement.width || next.height !== this.placement.height)) {
         this.deps.log('the kiosk monitor moved: reopening the presenter there');
         this.reopenForScreens();
@@ -214,7 +216,8 @@ export class KioskController {
       this.deps.log('no Chromium-family browser found for the kiosk');
       return;
     }
-    const placement = choosePlacement(this.settings.screen, this.deps.screens());
+    const known = this.deps.screens();
+    const placement = choosePlacement(this.settings.screen, known.screens, known.live);
     if (!placement.ok) {
       this.state = placement.reason;
       this.placement = null;

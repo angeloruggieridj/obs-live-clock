@@ -137,10 +137,8 @@ export async function buildServer(opts: ServerOptions): Promise<BuiltServer> {
       scheduler,
       spawn: opts.kioskDeps?.spawn ?? nodeSpawn,
       detect: opts.kioskDeps?.detect ?? ((override) => detectBrowser(detectDeps, override)),
-      screens: () => {
-        const known = screens.get().screens;
-        return known.length > 0 ? known : null;
-      },
+      // The snapshot carries `live`: a remembered (not live) list is shown to the operator but never places a window.
+      screens: () => screens.get(),
       port: () => settings.port,
       profileDir: paths.kioskProfile,
       log: (message) => app.log.info(message),

@@ -62,6 +62,14 @@ describe('PUT /api/settings', () => {
     await writeFile(join(dataDir, 'settings.json'), JSON.stringify({ obs: { port: 4455, password: 'hunter2' } }));
     const settings = Settings.parse(JSON.parse(await readFile(join(dataDir, 'settings.json'), 'utf8')));
     const { app, spawned } = await boot({ dataDir, settings });
+    // A position is placed from the LIVE list only, so the plugin must have reported before the save can open it.
+    const token = (await readFile(join(dataDir, 'secret.token'), 'utf8')).trim();
+    await app.inject({
+      method: 'POST',
+      url: '/api/internal/screens',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { screens: [{ name: 'DISPLAY2', x: 1920, y: 0, width: 1920, height: 1080, primary: false }] },
+    });
     const res = await app.inject({
       method: 'PUT',
       url: '/api/settings',
@@ -203,6 +211,53 @@ describe('screens from the plugin reach the kiosk', () => {
     expect(shown.live).toBe(true);
     expect(shown.screens).toHaveLength(2);
     expect(JSON.parse(await readFile(join(dataDir, 'screens.json'), 'utf8')).screens).toHaveLength(2);
+  });
+
+  it('a remembered list is not used to place a named monitor: it waits, then opens when the plugin reports it live', async () => {
+    const dataDir = await tempDir();
+    await writeFile(
+      join(dataDir, 'screens.json'),
+      JSON.stringify({ screens: [{ name: 'DISPLAY2', x: 1920, y: 0, width: 1920, height: 1080, primary: false }] }),
+    );
+    const settings = Settings.parse({ kiosk: { enabled: true, screen: { kind: 'name', name: 'DISPLAY2' } } });
+    const { app, spawned, screens } = await boot({ dataDir, settings });
+    const token = (await readFile(join(dataDir, 'secret.token'), 'utf8')).trim();
+    // The remembered (not live) list must not place the window: no launch until the plugin reports.
+    expect((await app.inject({ method: 'POST', url: '/api/kiosk/start' })).json()).toMatchObject({ state: 'waiting_for_screens' });
+    expect(spawned).toHaveLength(0);
+    // A live report that contains the monitor opens the window on it.
+    await app.inject({
+      method: 'POST',
+      url: '/api/internal/screens',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { screens: [{ name: 'DISPLAY2', x: 1920, y: 0, width: 1920, height: 1080, primary: false }] },
+    });
+    await screens.flush();
+    await vi.waitFor(() => expect(spawned).toHaveLength(1));
+    expect(spawned[0]!.args).toContain('--window-position=1936,16');
+  });
+
+  it('a live list that lacks the named monitor stays waiting (screen_missing), never the remembered coordinates', async () => {
+    const dataDir = await tempDir();
+    await writeFile(
+      join(dataDir, 'screens.json'),
+      JSON.stringify({ screens: [{ name: 'DISPLAY2', x: 1920, y: 0, width: 1920, height: 1080, primary: false }] }),
+    );
+    const settings = Settings.parse({ kiosk: { enabled: true, screen: { kind: 'name', name: 'DISPLAY2' } } });
+    const { app, spawned, screens } = await boot({ dataDir, settings });
+    const token = (await readFile(join(dataDir, 'secret.token'), 'utf8')).trim();
+    await app.inject({ method: 'POST', url: '/api/kiosk/start' });
+    await app.inject({
+      method: 'POST',
+      url: '/api/internal/screens',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { screens: [{ name: 'DISPLAY1', x: 0, y: 0, width: 1920, height: 1080, primary: true }] },
+    });
+    await screens.flush();
+    await vi.waitFor(async () => {
+      expect((await app.inject({ method: 'GET', url: '/api/kiosk' })).json()).toMatchObject({ state: 'screen_missing' });
+    });
+    expect(spawned).toHaveLength(0);
   });
 
   it('the list is remembered across a restart (marked not live)', async () => {
