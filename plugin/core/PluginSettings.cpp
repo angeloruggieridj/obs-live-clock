@@ -31,8 +31,14 @@ std::optional<std::string> normalizeRemoteUrl(std::string_view text) {
     const bool bracketed = authority.front() == '[';
     if (colon != std::string::npos && (!bracketed || authority.find(']') < colon)) {
         const std::string port = authority.substr(colon + 1);
-        if (port.empty() || !std::all_of(port.begin(), port.end(), [](unsigned char c) { return std::isdigit(c); })) return std::nullopt;
-        if (std::stoi(port) < 1 || std::stoi(port) > 65535) return std::nullopt;
+        // Never std::stoi here: an all-digit port longer than INT_MAX would throw out_of_range and escape into OBS.
+        // Digits only and at most 5 of them, then the 1..65535 range check, so a bad port is simply rejected.
+        if (port.empty() || port.size() > 5 ||
+            !std::all_of(port.begin(), port.end(), [](unsigned char c) { return std::isdigit(c); }))
+            return std::nullopt;
+        int value = 0;
+        for (const char digit : port) value = value * 10 + (digit - '0');
+        if (value < 1 || value > 65535) return std::nullopt;
         if (colon == 0) return std::nullopt;
     }
     while (!url.empty() && url.back() == '/') url.pop_back();

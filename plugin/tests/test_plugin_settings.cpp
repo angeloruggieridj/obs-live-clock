@@ -24,6 +24,16 @@ TEST_CASE("normalizeRemoteUrl rejects anything that could surprise") {
     }
 }
 
+TEST_CASE("normalizeRemoteUrl rejects out-of-range and non-numeric ports without throwing") {
+    for (const char* bad : {"http://host:99999999999", "http://host:0", "http://host:65536", "http://host:12a"}) {
+        std::optional<std::string> rejected;
+        CHECK_NOTHROW(rejected = normalizeRemoteUrl(bad));
+        CHECK_MESSAGE(!rejected.has_value(), bad);
+    }
+    CHECK(normalizeRemoteUrl("http://host:1") == "http://host:1");
+    CHECK(normalizeRemoteUrl("http://host:65535") == "http://host:65535");
+}
+
 TEST_CASE("settings round-trip and tolerate garbage") {
     PluginSettings s;
     s.mode = ServerMode::Remote;
