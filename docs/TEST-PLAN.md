@@ -803,3 +803,239 @@ formato: **Setup**, **Azione**, **Risultato atteso**.
 **Risultato atteso**
 
 - Tutte e tre le pagine passano all'inglese.
+
+---
+
+## Editor (controlli manuali)
+
+Questa sezione verifica l'editor (`/editor`, Piano 5) con OBS reale. Vale la stessa forma:
+**Setup**, **Azione**, **Risultato atteso**. Due comandi ricorrenti:
+
+```bash
+pnpm dev                                            # Vite su http://localhost:5173, editor su /editor
+pnpm build                                          # poi il server serve http://127.0.0.1:4460/editor
+```
+
+Il campo `data-state` di `[data-testid="save-state"]` dice lo stato del salvataggio: `clean`, `dirty`,
+`saving`, `error`, `invalid`, `locked`.
+
+### E1 — Layout e nomi lunghi
+
+**Setup**
+
+- `/editor` con un format aperto e almeno tre blocchi, di cui uno con un nome di **120 caratteri**.
+- DevTools → Console aperta (`window.innerWidth`).
+
+**Azione**
+
+- Imposta la finestra a **1366×768**, poi a **1920×1080**.
+- Cerca lo scorrimento orizzontale della **pagina** (non della timeline): `document.documentElement.scrollWidth` deve restare ≤ `window.innerWidth`.
+- Guarda il blocco dal nome lungo dentro la timeline e il titolo del documento in alto.
+
+**Risultato atteso**
+
+- Le cinque regioni (libreria, timeline, proprietà, impostazioni, verifica) restano leggibili a entrambe le risoluzioni.
+- La **pagina** non scorre in orizzontale; scorre soltanto la traccia della timeline (`.tl-scroll`).
+- Il nome da 120 caratteri è **troncato con i puntini** (`…`) e non sborda dal blocco; il titolo del documento è troncato allo stesso modo.
+
+### E2 — Trascinamento con mouse e touch
+
+**Setup**
+
+- Almeno tre blocchi; `/editor` aperta.
+
+**Azione**
+
+1. Con il **mouse**, tieni premuto su un blocco e trascinalo a destra di un altro, senza lasciare.
+2. Con un **dito**, su uno schermo touch (o con l'emulazione touch di DevTools), ripeti lo stesso gesto.
+3. A metà di un trascinamento, premi **Esc**; poi rilascia.
+
+**Risultato atteso**
+
+- Dopo i primi 4 px di movimento compare la **barra di rilascio** (`[data-testid="drop-marker"]`) nel punto in cui il blocco atterrerà.
+- Al rilascio il blocco è nell'ordine indicato dalla barra (mouse e touch si comportano allo stesso modo).
+- **Esc** annulla: la barra sparisce e, al rilascio, il blocco resta dov'era.
+
+### E3 — Ridimensionamento e annullamento
+
+**Setup**
+
+- Un blocco selezionato; zoom tale che il blocco sia largo a sufficienza.
+
+**Azione**
+
+1. Trascina la **maniglia destra** del blocco di una quantità qualsiasi.
+2. Premi **Ctrl+Z** una sola volta.
+
+**Risultato atteso**
+
+- La durata del blocco durante il trascinamento è **multipla di 5 s** (la durata non è mai sotto il minimo).
+- **Un** Ctrl+Z riporta la durata a quella di partenza: l'intero trascinamento è **un solo passo** di undo.
+
+### E4 — Solo tastiera
+
+**Setup**
+
+- Tre blocchi; nessun campo di testo a fuoco.
+
+**Azione**
+
+1. Porta il fuoco su un blocco con **Tab** e seleziona con le **frecce**.
+2. Spostalo con **Alt+frecce**, cambia la durata con **Maiusc+frecce** (±5 s) e con **Ctrl+Maiusc+frecce** (±1 min).
+3. Duplicalo con **Ctrl+D**, eliminalo con **Canc**.
+4. Annulla con **Ctrl+Z** e ripristina con **Ctrl+Shift+Z** (o **Ctrl+Y**).
+
+**Risultato atteso**
+
+- Frecce = selezione del blocco vicino; Alt+frecce = spostamento; Maiusc+frecce = durata ±5 s; Ctrl+Maiusc+frecce = ±1 min.
+- `Ctrl+D` duplica, `Canc` elimina; l'annullamento e il ripristino agiscono sulla modifica giusta (i pulsanti **Annulla**/**Ripristina** mostrano l'operazione nel `title`).
+- L'aiuto in fondo alla timeline (`timeline.keysHelp`) elenca la stessa mappa. Se **Alt+frecce** non fa nulla, il browser l'ha intercettato: usa i pulsanti della toolbar (vedi i residui nel `BACKLOG`).
+
+### E5 — Salvataggio automatico offline
+
+**Setup**
+
+- `/editor` con un documento aperto; indicatore di salvataggio su **"Salvato"**.
+
+**Azione**
+
+1. Ferma il server (Ctrl+C, o chiudi `[server]`).
+2. Modifica un nome.
+3. Aspetta qualche secondo, poi **riavvia il server**.
+4. Con l'indicatore ancora rosso, prova a **chiudere la scheda**.
+
+**Risultato atteso**
+
+- Dopo qualche secondo l'indicatore diventa **rosso** con `data-state="error"` e dice cosa è fallito: **"SALVATAGGIO NON RIUSCITO (network): nuovo tentativo in corso"** e il pulsante **"Riprova ora"**.
+- Al riavvio del server l'indicatore torna **"Salvato"** (`clean`) da solo (backoff) o con **"Riprova ora"**.
+- Il file su disco è **uguale a ciò che è a schermo**: apri `episodes/<id>.json` o `formats/<id>.json` nella cartella dati e confronta il nome modificato.
+- Tentando di chiudere la scheda mentre è rosso, il browser mostra la **conferma di uscita**.
+
+### E6 — Due schede
+
+**Setup**
+
+- Lo stesso documento aperto in due schede, **A** e **B**, entrambe su **"Salvato"**.
+
+**Azione**
+
+1. In **A** cambia il nome del documento e attendi che salvi.
+2. Porta il fuoco su **B** (clicca dentro).
+3. In **B**, modifica un nome **senza** lasciar finire il salvataggio; poi in **A** cambia un altro nome e attendi; infine torna su **B**.
+
+**Risultato atteso**
+
+- Caso pulito: **B** si aggiorna **da sola** con il contenuto di A e compare per 4 s il messaggio **"Aggiornato da un'altra sessione"** (`[role="status"]`, classe `ed-toast`).
+- Caso sporco: in **B** compare la **banner di conflitto** **"Questo documento è stato modificato altrove."** con i due pulsanti **"Usa la versione del server"** e **"Mantieni la mia"**.
+- "Usa la versione del server" adotta il contenuto di A; "Mantieni la mia" tiene quello di B e lo riscrive.
+
+### E7 — Import dalla Playlist Deck vera (≥ 1.4.0)
+
+**Setup**
+
+- OBS 30.x con **Playlist Deck ≥ 1.4.0** connesso e una playlist con almeno due servizi; una puntata aperta, con almeno un blocco **studio**.
+- Pannello **Importa servizi** visibile.
+
+**Azione**
+
+1. Premi **"Leggi playlist"** e importa in coda al blocco.
+2. Importa di nuovo gli stessi servizi.
+3. Premi **Ctrl+Z** una volta.
+
+**Risultato atteso**
+
+- I servizi compaiono con l'etichetta di origine **`DECK`** e la loro **durata**.
+- Un servizio senza durata nota mostra **`—`** e l'avviso **"Durata ignota: da inserire a mano"**.
+- Il secondo import non aggiunge nulla: **"Nessun servizio nuovo: tutti già presenti"** (e il riepilogo **"Aggiunti n · già presenti n · senza durata n"**).
+- **Un** Ctrl+Z rimuove **tutto** l'import.
+
+### E8 — Import delle tre esportazioni reali (JSON, CSV, M3U)
+
+**Setup**
+
+- Dalla Playlist Deck esporta le stesse voci in **JSON**, **CSV** e **M3U**, una volta con percorsi **assoluti** e una con l'opzione **"portable"** (percorsi **relativi**).
+
+**Azione**
+
+1. Importa i tre file assoluti, uno per volta, in una puntata con un blocco studio.
+2. Importa i tre file "portable".
+3. Osserva le etichette di origine accanto a ciascun servizio.
+
+**Risultato atteso**
+
+- Da JSON e CSV l'origine è **`FILE`**; dall'M3U (secondi interi nel `#EXTINF`) è **`FILE (s)`**, cioè durata arrotondata al secondo.
+- Nei file "portable" compare per ogni voce l'avviso **"percorso relativo: potrebbe non corrispondere alla playlist"**.
+- I formati riconosciuti sono esattamente i tre dell'esportatore: JSON (`duration` in ms, `-1` = ignota), CSV (`title,path,duration_ms`) e M3U (`#EXTM3U` + `#EXTINF`). **Questo è il controllo che conferma i formati letti dal sorgente dell'esportatore.**
+
+### E9 — Check OBS
+
+**Setup**
+
+- Episodio con scene e sorgenti che esistono in OBS; pannello **Verifica** aperto.
+
+**Azione**
+
+1. Rinomina in OBS una **scena** usata da un blocco; esegui **Check OBS**.
+2. Rimuovi il **plugin Playlist Deck** (o usa una versione < 1.4.0); esegui di nuovo.
+3. **Chiudi OBS**; esegui di nuovo.
+4. Con almeno un errore nel Check, premi **una** volta **"Carica per la live"**, poi premi di nuovo.
+
+**Risultato atteso**
+
+- Scena rinominata: l'elenco mostra l'issue **`scene_missing`** "Scena assente in OBS" (e `media_input_missing` per una sorgente assente). Playlist Deck assente: **`deck_absent`** "Playlist Deck non installato" (con versione vecchia, `deck_legacy`). OBS chiuso: **`obs_not_connected`** "OBS non connesso".
+- Le issue sono divise in **ERRORE** e **AVVISO**, raggruppate per blocco, e cliccandole il blocco va a fuoco nella timeline.
+- È sempre presente la frase di cautela: **"Il Check OBS non può verificare tutto (per esempio le sorgenti media se OBS non risponde): nessuna segnalazione non è una garanzia."**
+- Il primo clic mostra **"Il Check OBS ha trovato errori: premi di nuovo per caricare lo stesso"**; il **secondo** clic carica.
+
+### E10 — Carica per la live
+
+**Setup**
+
+- Una puntata con un **errore** di validazione (per esempio un gruppo di scene inesistente) e una **senza errori ma con avvisi** (per esempio un media senza durata).
+
+**Azione**
+
+1. Sulla puntata con errore, premi **"Carica per la live"**.
+2. Correggi l'errore e carica; oppure carica la puntata con soli avvisi.
+3. Apri `/dock`, `/control` e `/presenter`.
+
+**Risultato atteso**
+
+- Con l'errore il caricamento è **bloccato**: **"Correggi gli errori prima di caricare"** (o il rifiuto del server `rundown_invalid`).
+- Gli **avvisi non bloccano**: il caricamento riesce e compare **"Puntata caricata per la live"**.
+- Dopo il caricamento, `/dock`, `/control` e `/presenter` mostrano quella puntata.
+
+### E11 — Blocco della puntata in onda
+
+**Setup**
+
+- Un editor con la puntata aperta, ma **non** ancora in onda.
+
+**Azione**
+
+1. Avvia il programma (`START PROGRAM` da OBS, o `POST /api/live/command`).
+2. Apri la stessa puntata nell'editor; aspetta fino a **3 s**.
+3. Prova a modificare un nome.
+
+**Risultato atteso**
+
+- Compare la banner **"Puntata IN ONDA: sola lettura"**; la timeline mostra **"Sola lettura"** e ogni controllo (toolbar, proprietà, trascinamento, tastiera) è **disabilitato**.
+- Una scheda dell'editor **aperta prima** dell'avvio si blocca **entro 3 s** da sola (il polling di `GET /api/live/status` è ogni 3 s).
+- Il server rifiuta comunque la scrittura con **`409 episode_live`** e l'indicatore mostra **"Bloccato: puntata in onda"**.
+
+### E12 — Lingue e browser del dock
+
+**Setup**
+
+- `/editor` aperta; un Custom Browser Dock di OBS puntato a `http://127.0.0.1:4460/editor`.
+
+**Azione**
+
+1. Guarda ogni pannello: libreria, timeline, proprietà, import, impostazioni, verifica.
+2. Aggiungi **`?lang=en`** all'URL.
+3. Apri `/editor` nel **dock di OBS** (CEF) e prova a fare qualche operazione.
+
+**Risultato atteso**
+
+- In italiano tutti i testi sono in italiano; con `?lang=en` **tutti** i pannelli passano all'inglese.
+- Nel CEF del dock la pagina **si apre e funziona** senza errori in console: l'editor non è pensato per il dock (300 px), ma non deve rompersi.
