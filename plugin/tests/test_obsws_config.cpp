@@ -77,6 +77,17 @@ TEST_CASE("command line overrides win, like in obs-websocket") {
     SUBCASE("no arguments changes nothing") { CHECK(applyCommandLineOverrides(base, {}) == base); }
 }
 
+TEST_CASE("a repeated command line flag keeps the last value, like QCommandLineParser") {
+    ObsWsConfig base;
+    base.serverEnabled = true;
+    base.authRequired = false;
+    CHECK(applyCommandLineOverrides(base, {"--websocket_port=4466", "--websocket_port=4477"}).port == 4477);
+    CHECK(applyCommandLineOverrides(base, {"--websocket_port", "4466", "--websocket_port", "4477"}).port == 4477);
+    const auto cfg = applyCommandLineOverrides(base, {"--websocket_password", "first", "--websocket_password=second"});
+    CHECK(cfg.authRequired);
+    CHECK(cfg.password.reveal() == "second");
+}
+
 TEST_CASE("the credentials body carries host, port and the password only when authentication is on") {
     ObsWsConfig cfg;
     cfg.serverEnabled = true;
@@ -95,6 +106,20 @@ TEST_CASE("the credentials body carries host, port and the password only when au
     cfg.password = Secret();
     body = nlohmann::json::parse(buildCredentialsBody(cfg));
     CHECK_FALSE(body.contains("password"));
+}
+
+TEST_CASE("the credentials body never throws on a non-UTF-8 password") {
+    ObsWsConfig cfg;
+    cfg.serverEnabled = true;
+    cfg.authRequired = true;
+    // Windows ANSI argv or a legacy global.ini can hand us bytes that are not valid UTF-8.
+    cfg.password = Secret(std::string("bad\xff\xfepw"));
+    std::string body;
+    CHECK_NOTHROW(body = buildCredentialsBody(cfg));
+    const auto parsed = nlohmann::json::parse(body);  // the body must stay valid JSON
+    CHECK(parsed["host"] == "127.0.0.1");
+    CHECK(parsed["port"] == 4455);
+    CHECK(parsed.contains("password"));
 }
 
 TEST_CASE("describe(config) is log-safe") {
