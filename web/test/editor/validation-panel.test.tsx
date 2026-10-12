@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-import { screen, within } from '@testing-library/react';
+import { act, screen, within } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { ValidationPanel } from '../../src/editor/validation/ValidationPanel';
 import { resizeBlock, patchMedia } from '../../src/editor/model/ops';
@@ -174,5 +174,108 @@ describe('Check OBS', () => {
     api.failNext('checkObs', new Error('boom'));
     await user.click(screen.getByRole('button', { name: 'Check OBS' }));
     expect(await screen.findByText(/Check OBS non riuscito/)).toBeTruthy();
+  });
+});
+
+describe('stale and switched state', () => {
+  it('forgets the Check OBS result and the load message when another document is opened', async () => {
+    const api = new FakeEditorApi();
+    api.formats.set('solo-futsal', sampleFormat());
+    api.episodes.set('ep-2026-10-12', sampleEpisode());
+    api.episodes.set('ep-2026-10-13', { ...sampleEpisode(), id: 'ep-2026-10-13' });
+    const { session, user } = await renderWithSession(<ValidationPanel />, { open: EPISODE, api });
+
+    await user.click(screen.getByRole('button', { name: 'Check OBS' }));
+    await screen.findByText('Il Check OBS non ha trovato problemi');
+    await user.click(screen.getByRole('button', { name: 'Carica per la live' }));
+    await screen.findByText('Puntata caricata per la live');
+
+    await act(async () => {
+      await session.open({ kind: 'episode', id: 'ep-2026-10-13' });
+    });
+
+    expect(screen.queryByText('Puntata caricata per la live')).toBeNull();
+    expect(screen.queryByText('Il Check OBS non ha trovato problemi')).toBeNull();
+  });
+
+  it('drops the previous success when a re-check fails', async () => {
+    const { api, user } = await setup();
+    await user.click(screen.getByRole('button', { name: 'Check OBS' }));
+    await screen.findByText('Il Check OBS non ha trovato problemi');
+
+    api.failNext('checkObs', new Error('boom'));
+    await user.click(screen.getByRole('button', { name: 'Check OBS' }));
+
+    expect(await screen.findByText(/Check OBS non riuscito/)).toBeTruthy();
+    expect(screen.queryByText('Il Check OBS non ha trovato problemi')).toBeNull();
+  });
+
+  it('hides the Check OBS issues once the result is out of date', async () => {
+    const { session, user } = await setup(EPISODE, (a) => {
+      a.check = { connected: true, obsWebSocketVersion: '5.5.0', deck: { capability: 'events' }, issues: [{ severity: 'error', code: 'scene_missing', blockId: 'br1', message: 'Scene "BREAK" is not in OBS' }] };
+    });
+    await user.click(screen.getByRole('button', { name: 'Check OBS' }));
+    await screen.findByTestId('issue-scene_missing-br1');
+
+    session.apply(resizeBlock('b3', 130_000));
+    expect(await screen.findByText(/Risultato non aggiornato/)).toBeTruthy();
+    expect(screen.queryByTestId('issue-scene_missing-br1')).toBeNull();
+  });
+
+  it('asks for a fresh confirmation after another Check OBS that still finds errors', async () => {
+    const { api, user } = await setup(EPISODE, (a) => {
+      a.check = { connected: true, obsWebSocketVersion: '5.5.0', deck: { capability: 'events' }, issues: [{ severity: 'error', code: 'scene_missing', blockId: 'br1', message: 'Scene "BREAK" is not in OBS' }] };
+    });
+    const loadButton = () => screen.getByRole('button', { name: 'Carica per la live' });
+
+    await user.click(screen.getByRole('button', { name: 'Check OBS' }));
+    await screen.findByTestId('issue-scene_missing-br1');
+    await user.click(loadButton());
+    expect(screen.getByText('Il Check OBS ha trovato errori: premi di nuovo per caricare lo stesso')).toBeTruthy();
+    expect(api.count('loadLive')).toBe(0);
+
+    await user.click(screen.getByRole('button', { name: 'Check OBS' }));
+    await screen.findByTestId('issue-scene_missing-br1');
+    await user.click(loadButton());
+
+    expect(api.count('loadLive')).toBe(0);
+    expect(screen.getByText('Il Check OBS ha trovato errori: premi di nuovo per caricare lo stesso')).toBeTruthy();
+  });
+
+  it('disables the load button while a load is in flight', async () => {
+    const { api, user } = await setup();
+    const release = api.hold('loadLive');
+    const button = screen.getByRole('button', { name: 'Carica per la live' }) as HTMLButtonElement;
+
+    await user.click(button);
+    expect(button.disabled).toBe(true);
+
+    release();
+    expect(await screen.findByText('Puntata caricata per la live')).toBeTruthy();
+    expect(button.disabled).toBe(false);
+  });
+
+  it('explains that the load waits while a document is being opened', async () => {
+    const api = new FakeEditorApi();
+    api.formats.set('solo-futsal', sampleFormat());
+    api.episodes.set('ep-2026-10-12', sampleEpisode());
+    api.episodes.set('ep-2026-10-13', { ...sampleEpisode(), id: 'ep-2026-10-13' });
+    const { session } = await renderWithSession(<ValidationPanel />, { open: EPISODE, api });
+
+    const release = api.hold('getDoc');
+    let opening = Promise.resolve(true);
+    await act(async () => {
+      opening = session.open({ kind: 'episode', id: 'ep-2026-10-13' });
+      await Promise.resolve();
+    });
+
+    const button = screen.getByRole('button', { name: 'Carica per la live' }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    expect(screen.getByText('Attendere il caricamento della puntata')).toBeTruthy();
+
+    await act(async () => {
+      release();
+      await opening;
+    });
   });
 });

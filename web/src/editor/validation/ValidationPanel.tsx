@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { validateRundown } from '@olc/shared';
 import { ApiError } from '../../core/http';
 import type { ObsCheckResult } from '../api/editor-api';
@@ -27,11 +27,23 @@ export function ValidationPanel() {
   const [confirmLoad, setConfirmLoad] = useState(false);
   const [loadMessage, setLoadMessage] = useState<string | null>(null);
   const [loadIssues, setLoadIssues] = useState<DisplayIssue[]>([]);
+  const [loading, setLoading] = useState(false);
 
   const isEpisode = snap.ref?.kind === 'episode';
   const episodeId = snap.ref !== null && snap.ref.kind === 'episode' ? snap.ref.id : null;
   // While a document is loading the session is not editable: no action may start against a half-loaded copy.
   const busy = snap.phase === 'loading';
+  const docKey = snap.ref === null ? null : `${snap.ref.kind}:${snap.ref.id}`;
+
+  // Opening another document must not carry over the verdict of the previous one: a stale "loaded" or "no problems"
+  // would tell the director the wrong episode is on air. The check/load state is per document.
+  useEffect(() => {
+    setCheck(null);
+    setCheckError(null);
+    setConfirmLoad(false);
+    setLoadMessage(null);
+    setLoadIssues([]);
+  }, [docKey]);
 
   const local = useMemo<DisplayIssue[]>(
     () => (doc === null ? [] : dedupeIssues(validateRundown(doc)).map((i) => ({ ...i, source: 'rundown' as const }))),
@@ -51,6 +63,9 @@ export function ValidationPanel() {
     if (episodeId === null || checking) return;
     setChecking(true);
     setCheckError(null);
+    setCheck(null); // a new check invalidates the previous verdict, even if this one fails
+    setConfirmLoad(false); // the confirmation belonged to the previous check
+    setLoadIssues([]);
     try {
       await session.autosave.flush(); // the server checks the saved copy
       if (session.autosave.getState().kind !== 'clean') {
@@ -68,7 +83,7 @@ export function ValidationPanel() {
   }
 
   async function onLoad(): Promise<void> {
-    if (episodeId === null) return;
+    if (episodeId === null || loading) return;
     if (obsHasErrors && !confirmLoad) {
       setConfirmLoad(true);
       setLoadMessage(null);
@@ -77,18 +92,23 @@ export function ValidationPanel() {
     setConfirmLoad(false);
     setLoadMessage(null);
     setLoadIssues([]);
-    const result = await session.loadForLive(episodeId);
-    if (result.ok) {
-      setLoadMessage(t('validation.loadOk'));
-    } else if (result.reason === 'invalid') {
-      setLoadMessage(t('validation.loadInvalid'));
-      setLoadIssues((result.issues ?? []).map((i) => ({ ...i, source: 'obs' as const })));
-    } else if (result.reason === 'live_running') {
-      setLoadMessage(t('validation.loadLiveRunning'));
-    } else if (result.reason === 'unsaved') {
-      setLoadMessage(t('validation.loadUnsaved'));
-    } else {
-      setLoadMessage(t('validation.loadFailed', { code: result.reason }));
+    setLoading(true); // a second click while the first load is in flight must not start another
+    try {
+      const result = await session.loadForLive(episodeId);
+      if (result.ok) {
+        setLoadMessage(t('validation.loadOk'));
+      } else if (result.reason === 'invalid') {
+        setLoadMessage(t('validation.loadInvalid'));
+        setLoadIssues((result.issues ?? []).map((i) => ({ ...i, source: 'obs' as const })));
+      } else if (result.reason === 'live_running') {
+        setLoadMessage(t('validation.loadLiveRunning'));
+      } else if (result.reason === 'unsaved') {
+        setLoadMessage(t('validation.loadUnsaved'));
+      } else {
+        setLoadMessage(t('validation.loadFailed', { code: result.reason }));
+      }
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -142,8 +162,8 @@ export function ValidationPanel() {
           </p>
         ) : null}
 
-        {check !== null && check.result.issues.length === 0 ? <p>{t('validation.obsClean')}</p> : null}
-        {renderGroups(groupByBlock(obs, blocks))}
+        {check !== null && !stale && check.result.issues.length === 0 ? <p>{t('validation.obsClean')}</p> : null}
+        {!stale ? renderGroups(groupByBlock(obs, blocks)) : null}
 
         {stale ? <p className="ed-warn">{t('validation.checkStale')}</p> : null}
         {checkError !== null ? <p className="ed-warn">{checkError}</p> : null}
@@ -152,10 +172,11 @@ export function ValidationPanel() {
 
       {isEpisode ? (
         <div className="ed-validation-load">
-          <button type="button" className="ed-btn" onClick={() => void onLoad()} disabled={blocked || busy}>
+          <button type="button" className="ed-btn" onClick={() => void onLoad()} disabled={blocked || busy || loading}>
             {t('validation.loadForLive')}
           </button>
           {blocked ? <p className="ed-error">{t('validation.loadBlocked')}</p> : null}
+          {busy && !blocked ? <p className="ed-warn">{t('validation.loadBusy')}</p> : null}
           {confirmLoad ? <p className="ed-warn">{t('validation.loadConfirm')}</p> : null}
           {loadMessage !== null ? <p role="status">{loadMessage}</p> : null}
           {renderGroups(groupByBlock(loadIssues, blocks))}
