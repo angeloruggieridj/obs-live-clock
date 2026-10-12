@@ -154,3 +154,28 @@ TEST_CASE("reset forgets the launch count so a settings change can start over") 
     CHECK(p.launches() == 0);
     CHECK(p.onHealth(20'000, U).launch);
 }
+
+TEST_CASE("reset during Launching never launches a second time") {
+    LaunchPolicy p;
+    CHECK(p.onHealth(0, U).launch);  // launch #1: the app is now booting
+    p.reset();                       // the operator saves settings during the boot window
+    CHECK(p.phase() == LaunchPhase::Launching);
+    CHECK(p.launches() >= 1);
+    CHECK_FALSE(p.onHealth(1'000, U).launch);  // the first process is still booting: no second one
+    CHECK(p.launches() == 1);
+}
+
+TEST_CASE("repeated reset cannot bypass the launch cap") {
+    LaunchPolicy p;
+    int launches = 0;
+    int64_t t = 0;
+    // A settings save during every boot window tries to refund the launch count. The window keeps
+    // it, so the resets cannot buy more processes than the cap of three allows.
+    for (int i = 0; i < 30; ++i) {
+        if (i > 0) p.reset();
+        if (p.onHealth(t, U).launch) ++launches;
+        t += 1'000;
+    }
+    CHECK(launches <= 3);
+    CHECK(launches >= 1);
+}
