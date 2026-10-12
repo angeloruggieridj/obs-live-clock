@@ -36,6 +36,10 @@ private:
     bool delivered_ = false;
     ObsWsConfig deliveredConfig_;
     std::string deliveredInstance_;
+    // What the last attempt (delivered or failed) was for. The backoff only delays retrying THIS data:
+    // a changed config or a new instanceId is always due at once (DT-5).
+    ObsWsConfig attemptedConfig_;
+    std::string attemptedInstance_;
     int failures_ = 0;
     int64_t retryAt_ = 0;
 };

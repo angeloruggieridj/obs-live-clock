@@ -9,9 +9,10 @@ namespace olc {
 namespace {
 bool validPort(long long port) { return port >= 1 && port <= 65535; }
 
-/** Value of option `name` in args, or nullopt. "--name v", "--name=v", "-name v" and "-name=v". */
+/** Value of option `name` in args, or nullopt. "--name v", "--name=v", "-name v" and "-name=v".
+ *  Like QCommandLineParser, a repeated option keeps its LAST occurrence on the command line. */
 std::optional<std::string> optionValue(const std::vector<std::string>& args, const std::string& name) {
-    for (size_t i = 0; i < args.size(); ++i) {
+    for (size_t i = args.size(); i-- > 0;) {
         for (const char* dashes : {"--", "-"}) {
             const std::string flag = std::string(dashes) + name;
             if (args[i] == flag) {
@@ -83,7 +84,9 @@ std::string describe(const ObsWsConfig& config) {
 std::string buildCredentialsBody(const ObsWsConfig& config) {
     nlohmann::json body = {{"host", "127.0.0.1"}, {"port", config.port}};
     if (config.authRequired && !config.password.empty()) body["password"] = config.password.reveal();
-    return body.dump();
+    // The password can be Windows ANSI argv or a legacy global.ini value and so not valid UTF-8; replace the
+    // bad bytes instead of throwing (nlohmann's strict handler would terminate the TickLoop/worker thread).
+    return body.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
 }
 
 }  // namespace olc

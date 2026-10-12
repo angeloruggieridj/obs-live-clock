@@ -35,6 +35,9 @@ int64_t backoffMs(DeliveryOutcome outcome, int failures) {
 }  // namespace
 
 bool CredentialTracker::due(int64_t nowMs, const ObsWsConfig& config, const std::string& instanceId) const {
+    // New data (a changed obs-websocket config or a new app instance) is delivered at once: the backoff
+    // only delays retrying the same data that just failed, never first delivery of something new.
+    if (config != attemptedConfig_ || instanceId != attemptedInstance_) return true;
     if (nowMs < retryAt_) return false;
     if (!delivered_) return true;
     if (instanceId != deliveredInstance_) return true;
@@ -43,6 +46,8 @@ bool CredentialTracker::due(int64_t nowMs, const ObsWsConfig& config, const std:
 
 void CredentialTracker::record(int64_t nowMs, DeliveryOutcome outcome, const ObsWsConfig& config,
                                const std::string& instanceId) {
+    attemptedConfig_ = config;
+    attemptedInstance_ = instanceId;
     if (outcome == DeliveryOutcome::Delivered) {
         delivered_ = true;
         deliveredConfig_ = config;
@@ -59,6 +64,8 @@ void CredentialTracker::forget() {
     delivered_ = false;
     deliveredConfig_ = ObsWsConfig{};
     deliveredInstance_.clear();
+    attemptedConfig_ = ObsWsConfig{};
+    attemptedInstance_.clear();
     failures_ = 0;
     retryAt_ = 0;
 }

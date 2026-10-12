@@ -56,6 +56,15 @@ TEST_CASE("a changed password or port in obs-websocket makes the delivery due ag
     CHECK(t.due(10, config("old", 4466), "i1"));
 }
 
+TEST_CASE("a changed config or instanceId bypasses the retry backoff, the same data does not") {
+    CredentialTracker t;
+    t.record(1'000, DeliveryOutcome::TransportError, config(), "i1");  // backoff until 3'000 ms
+    CHECK_FALSE(t.due(1'500, config(), "i1"));       // retrying the same data still waits
+    CHECK(t.due(1'500, config("new"), "i1"));        // a changed password is delivered at once
+    CHECK(t.due(1'500, config("pw", 4466), "i1"));   // a changed port is delivered at once
+    CHECK(t.due(1'500, config(), "i2"));             // a new app instance is delivered at once
+}
+
 TEST_CASE("failures back off, then a delivery resets everything") {
     CredentialTracker t;
     t.record(1'000, DeliveryOutcome::TransportError, config(), "i1");
