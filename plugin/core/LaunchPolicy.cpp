@@ -11,6 +11,14 @@ LaunchPolicy::LaunchPolicy(LaunchPolicyConfig config) : config_(std::move(config
 }
 
 void LaunchPolicy::reset() {
+    if (phase_ == LaunchPhase::Launching) {
+        // A settings save during the boot window must not forget the launch that is already in
+        // flight: keep the phase, the attempt and the launch clock, and never refund the count.
+        // Otherwise the next probe would launch a second process, and repeated resets would
+        // bypass the cooldown and the launch cap.
+        launches_ = std::max(launches_, 1);
+        return;
+    }
     phase_ = LaunchPhase::Checking;
     launches_ = 0;
     attempt_ = 0;
