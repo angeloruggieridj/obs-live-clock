@@ -169,3 +169,113 @@ TEST_CASE("session ids are 16 hex characters and differ between runs") {
     CHECK(a.find_first_not_of("0123456789abcdef") == std::string::npos);
     CHECK(a != b);
 }
+
+TEST_CASE("the constructor strips a trailing slash like setBaseUrl") {
+    FakeHttp http;
+    ApiClient api(http, "http://127.0.0.1:4460/", [] { return std::string("tok"); });
+    api.health();
+    REQUIRE(http.requests().size() == 1);
+    CHECK(http.requests().at(0).url == "http://127.0.0.1:4460/api/health");
+}
+
+TEST_CASE("the constructor accepts only loopback http base URLs") {
+    FakeHttp http;
+    for (const char* base : {"http://127.0.0.1:4460", "http://localhost:4460", "http://[::1]:4460"}) {
+        ApiClient api(http, base, [] { return std::string("tok"); });
+        api.health();
+    }
+    const auto reqs = http.requests();
+    REQUIRE(reqs.size() == 3);
+    CHECK(reqs[0].url == "http://127.0.0.1:4460/api/health");
+    CHECK(reqs[1].url == "http://localhost:4460/api/health");
+    CHECK(reqs[2].url == "http://[::1]:4460/api/health");
+}
+
+TEST_CASE("a non-loopback base URL is refused: the token and the credentials body never leave the box") {
+    FakeHttp http;
+    ApiClient api(http, "http://192.168.1.50:4460", [] { return std::string("tok"); });
+    CHECK(api.baseUrl().empty());
+    CHECK_FALSE(api.postCredentials(R"({"password":"hunter2"})").answered());
+    CHECK(http.requests().empty());
+}
+
+TEST_CASE("setBaseUrl keeps the previous URL when the new one is not loopback http") {
+    FakeHttp http;
+    ApiClient api(http, "http://127.0.0.1:4460", [] { return std::string("tok"); });
+    for (const char* bad : {"http://192.168.1.50:4460", "https://127.0.0.1:4460", "http://evil.example.com",
+                            "http://127.0.0.1@evil.example.com", "http://localhost.evil.example.com"}) {
+        api.setBaseUrl(bad);
+        CHECK(api.baseUrl() == "http://127.0.0.1:4460");
+    }
+    api.health();
+    REQUIRE(http.requests().size() == 1);
+    CHECK(http.requests().at(0).url == "http://127.0.0.1:4460/api/health");
+}
+
+TEST_CASE("a press that waited more than 2 s behind a hung request is dropped, never sent late") {
+    FakeHttp http;
+    std::promise<void> release;
+    auto gate = release.get_future().share();
+    std::atomic<int> inFlight{0};
+    http.setHandler([&](const HttpRequest&) {
+        ++inFlight;
+        gate.wait();  // the app is hung
+        return reply(200);
+    });
+    ApiClient api(http, "http://127.0.0.1:4460", [] { return std::string("tok"); });
+    Dispatcher worker;
+    std::atomic<int64_t> now{0};
+    std::mutex m;
+    std::vector<std::string> lines;
+    HotkeyForwarder fwd(
+        api, worker,
+        [&](const std::string& l) {
+            std::lock_guard<std::mutex> lock(m);
+            lines.push_back(l);
+        },
+        "sess", [&] { return now.load(); });
+
+    CHECK(fwd.onPress("clear"));  // sent straight away (age 0)
+    REQUIRE(waitFor([&] { return inFlight.load() == 1; }));
+    CHECK(fwd.onPress("next"));  // queued behind the hung request
+    now = 5000;                  // 5 s pass while the app stays hung
+    release.set_value();
+
+    REQUIRE(waitFor([&] { return fwd.staleDropped() == 1; }));
+    CHECK(http.requests().size() == 1);  // only the fresh press reached the app
+    for (const auto& r : http.requests()) CHECK(nlohmann::json::parse(r.body)["slot"] != "next");
+    {
+        std::lock_guard<std::mutex> lock(m);
+        REQUIRE(!lines.empty());
+        CHECK(lines[0].find("next") != std::string::npos);
+        CHECK(lines[0].find("tok") == std::string::npos);
+    }
+    worker.stop();
+}
+
+TEST_CASE("a press that waited no more than 2 s is still sent exactly once") {
+    FakeHttp http;
+    std::promise<void> release;
+    auto gate = release.get_future().share();
+    std::atomic<int> inFlight{0};
+    http.setHandler([&](const HttpRequest&) {
+        ++inFlight;
+        gate.wait();
+        return reply(200);
+    });
+    ApiClient api(http, "http://127.0.0.1:4460", [] { return std::string("tok"); });
+    Dispatcher worker;
+    std::atomic<int64_t> now{0};
+    HotkeyForwarder fwd(api, worker, nullptr, "sess", [&] { return now.load(); });
+
+    CHECK(fwd.onPress("clear"));
+    REQUIRE(waitFor([&] { return inFlight.load() == 1; }));
+    CHECK(fwd.onPress("next"));
+    now = 2000;  // exactly the limit: still fresh
+    release.set_value();
+
+    REQUIRE(waitFor([&] { return http.requests().size() == 2; }));
+    CHECK(fwd.staleDropped() == 0);
+    CHECK(nlohmann::json::parse(http.requests().at(1).body)["slot"] == "next");
+    worker.stop();
+}

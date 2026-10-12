@@ -17,13 +17,16 @@ namespace olc {
  */
 class Dispatcher {
 public:
-    explicit Dispatcher(std::size_t maxQueue = 32);
+    using Log = std::function<void(const std::string&)>;
+
+    explicit Dispatcher(std::size_t maxQueue = 32, Log log = nullptr);
     ~Dispatcher();
     Dispatcher(const Dispatcher&) = delete;
     Dispatcher& operator=(const Dispatcher&) = delete;
 
     bool post(std::function<void()> job);
-    /** Stops the worker: waits for the job that is running, drops the ones still queued. Idempotent. */
+    /** Stops the worker: waits for the job that is running, drops the ones still queued (counted in dropped() and
+     *  logged). Idempotent. Safe to call from inside a job: it then detaches instead of joining itself. */
     void stop();
 
     std::size_t dropped() const { return dropped_.load(); }
@@ -33,6 +36,7 @@ private:
     void run();
 
     const std::size_t maxQueue_;
+    Log log_;
     mutable std::mutex mutex_;
     std::condition_variable wake_;
     std::deque<std::function<void()>> queue_;

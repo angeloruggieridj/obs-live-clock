@@ -13,6 +13,9 @@ namespace olc {
  * Builds the app's HTTP requests. Blocking: call it from a Dispatcher job, never from OBS's UI thread.
  * The bearer token is asked for on every call (the file may have been rewritten), trimmed, and only ever put in
  * the Authorization header. Request bodies are not logged by anything in this class.
+ * The base URL is http on a loopback host only (127.0.0.1, localhost or [::1]): the constructor leaves it empty
+ * and setBaseUrl keeps the previous URL when given anything else, so the token and the credentials body can never
+ * be sent off-box. A refused client answers no request (answered() == false).
  */
 class ApiClient {
 public:
@@ -20,7 +23,7 @@ public:
 
     ApiClient(IHttpClient& http, std::string baseUrl, TokenProvider token);
 
-    /** "http://127.0.0.1:4460", no trailing slash. Thread-safe. */
+    /** "http://127.0.0.1:4460", trailing slashes stripped; a non-loopback URL is ignored (the previous is kept). */
     void setBaseUrl(std::string baseUrl);
     std::string baseUrl() const;
 

@@ -4,6 +4,8 @@
 #include <atomic>
 #include <chrono>
 #include <future>
+#include <mutex>
+#include <string>
 #include <vector>
 
 #include "Dispatcher.hpp"
@@ -84,6 +86,56 @@ TEST_CASE("a throwing job does not kill the worker") {
     std::atomic<bool> ran{false};
     d.post([&] { ran = true; });
     CHECK(waitFor([&] { return ran.load(); }));
+}
+
+TEST_CASE("jobs still queued when stop() is called are counted as dropped") {
+    Dispatcher d;
+    std::atomic<bool> started{false};
+    d.post([&] {
+        started = true;
+        std::this_thread::sleep_for(200ms);
+    });
+    REQUIRE(waitFor([&] { return started.load(); }));
+    CHECK(d.post([] {}));
+    CHECK(d.post([] {}));
+    CHECK(d.dropped() == 0);
+    d.stop();
+    CHECK(d.dropped() == 2);
+}
+
+TEST_CASE("stop() called from inside a job does not join the current thread") {
+    Dispatcher d;
+    std::atomic<bool> stopped{false};
+    d.post([&] {
+        d.stop();  // on the worker thread: must never join itself, nor terminate later
+        stopped = true;
+    });
+    REQUIRE(waitFor([&] { return stopped.load(); }));
+    std::this_thread::sleep_for(50ms);  // let the detached worker leave run() before d is destroyed
+    d.stop();                           // idempotent, and the destructor must still be safe
+}
+
+TEST_CASE("stop() logs how many queued jobs it discarded") {
+    std::mutex m;
+    std::vector<std::string> lines;
+    Dispatcher d(32, [&](const std::string& l) {
+        std::lock_guard<std::mutex> lock(m);
+        lines.push_back(l);
+    });
+    std::atomic<bool> started{false};
+    d.post([&] {
+        started = true;
+        std::this_thread::sleep_for(200ms);
+    });
+    REQUIRE(waitFor([&] { return started.load(); }));
+    CHECK(d.post([] {}));
+    CHECK(d.post([] {}));
+    d.stop();
+    CHECK(d.dropped() == 2);
+    std::lock_guard<std::mutex> lock(m);
+    REQUIRE(lines.size() == 1);
+    CHECK(lines[0].find("dropped") != std::string::npos);
+    CHECK(lines[0].find('2') != std::string::npos);
 }
 
 TEST_CASE("stop() waits for the running job, drops the queue, and later posts are refused") {
