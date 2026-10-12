@@ -21,6 +21,7 @@ export interface BlockViewProps {
   onPointerCancel: (e: PointerEvent<HTMLLIElement>) => void;
   onKeyDown: (e: KeyboardEvent<HTMLLIElement>, block: Block, index: number) => void;
   onKeyUp: (e: KeyboardEvent<HTMLLIElement>) => void;
+  onFocus: (block: Block) => void;
   onResizePointerDown: (e: PointerEvent<HTMLDivElement>, block: Block) => void;
   onResizePointerMove: (e: PointerEvent<HTMLDivElement>) => void;
   onResizePointerUp: (e: PointerEvent<HTMLDivElement>) => void;
@@ -46,6 +47,7 @@ export function BlockView(props: BlockViewProps) {
       onPointerCancel={props.onPointerCancel}
       onKeyDown={(e) => props.onKeyDown(e, block, index)}
       onKeyUp={props.onKeyUp}
+      onFocus={() => props.onFocus(block)}
     >
       <span className="tl-type">{block.kind === 'break' ? t('timeline.typeBreak') : t('timeline.typeStudio')}</span>
       <span className="tl-name">{block.name}</span>

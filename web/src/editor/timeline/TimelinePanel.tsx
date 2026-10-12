@@ -164,15 +164,19 @@ function TimelineTrack(props: { doc: EditorDoc; widthPx?: number; timeZone?: str
     const done = drag;
     setDrag(null);
     release(e);
-    if (done.target === null) {
-      session.selection.select(done.id); // a click: select only
+    if (done.target === null || done.target === done.index) {
+      session.selection.select(done.id); // a click (or a drag that came back): select only
       return;
     }
-    if (done.target !== done.index) applyMove(done.index, done.target);
+    applyMove(done.index, done.target);
     session.seal();
   };
 
   const abortDrag = (): void => setDrag(null);
+
+  const onBlockFocus = (block: Block): void => {
+    session.selection.select(block.id); // focus selects (Tab onto a block, then a toolbar action acts on it)
+  };
 
   const onResizePointerDown = (e: PointerEvent<HTMLDivElement>, block: Block): void => {
     e.stopPropagation();
@@ -205,6 +209,7 @@ function TimelineTrack(props: { doc: EditorDoc; widthPx?: number; timeZone?: str
       }
       return;
     }
+    if (readOnly) return; // a live read-only episode accepts no keyboard gesture (the selection must not move)
     const intent = blockKeyIntent(e);
     if (intent === null) return;
     e.preventDefault(); // Alt+Arrow is browser-back on Windows: never let the default through
@@ -305,6 +310,7 @@ function TimelineTrack(props: { doc: EditorDoc; widthPx?: number; timeZone?: str
                   onPointerCancel={abortDrag}
                   onKeyDown={onBlockKeyDown}
                   onKeyUp={onBlockKeyUp}
+                  onFocus={onBlockFocus}
                   onResizePointerDown={onResizePointerDown}
                   onResizePointerMove={onResizePointerMove}
                   onResizePointerUp={onResizePointerUp}

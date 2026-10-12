@@ -78,6 +78,25 @@ describe('selection and keyboard', () => {
     expect(block('br1').getAttribute('aria-current')).toBe('true');
   });
 
+  it('focusing a block selects it, so Elimina acts on the focused block', async () => {
+    const { session, user } = await setup();
+    expect(session.selection.getSnapshot().blockId).toBe('b1'); // opening selects the first block
+    block('b2').focus(); // Tab onto "Secondo blocco"
+    expect(session.selection.getSnapshot().blockId).toBe('b2');
+    await user.click(screen.getByRole('button', { name: 'Elimina' }));
+    expect(ids(session)).toEqual(['b1', 'br1', 'b3']);
+  });
+
+  it('ignores keyboard gestures when read-only, so the selection does not move', async () => {
+    const api = new FakeEditorApi();
+    api.live = { episodeId: 'ep-2026-10-12', phase: 'live' };
+    const { session } = await renderWithSession(<TimelinePanel widthPx={1000} />, { open: EPISODE, api });
+    session.selection.select('b2');
+    fireEvent.keyDown(block('b2'), { key: 'Delete' });
+    expect(ids(session)).toEqual(['b1', 'br1', 'b2', 'b3']);
+    expect(session.selection.getSnapshot().blockId).toBe('b2');
+  });
+
   it('Alt+Arrow moves the block to the next index', async () => {
     const { session, user } = await setup();
     block('b1').focus();
@@ -130,6 +149,17 @@ describe('pointer gestures', () => {
     fireEvent.pointerUp(b2, { clientX: 602, clientY: 5, pointerId: 1, isPrimary: true });
     expect(ids(session)).toEqual(['b1', 'br1', 'b2', 'b3']);
     expect(b2.getAttribute('aria-current')).toBe('true');
+  });
+
+  it('a drag that lands on the same index still selects the block', async () => {
+    const { session } = await setup();
+    session.selection.select(null);
+    const b2 = block('b2');
+    fireEvent.pointerDown(b2, { clientX: 600, clientY: 5, pointerId: 1, button: 0, isPrimary: true });
+    fireEvent.pointerMove(b2, { clientX: 640, clientY: 5, pointerId: 1, isPrimary: true }); // >4 px, still index 2
+    fireEvent.pointerUp(b2, { clientX: 640, clientY: 5, pointerId: 1, isPrimary: true });
+    expect(ids(session)).toEqual(['b1', 'br1', 'b2', 'b3']);
+    expect(session.selection.getSnapshot().blockId).toBe('b2');
   });
 
   it('Escape aborts a drag', async () => {
