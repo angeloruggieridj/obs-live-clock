@@ -67,16 +67,19 @@ export function PropertiesPanel() {
   return (
     <section className="ed-props" aria-label={t('props.title')}>
       <h2 className="ed-panel-title">{t('props.title')}</h2>
-      {/* The fields re-synchronise from the document through TextField's effect, so they never show the previous
-          block's text after the selection changes. */}
+      {/* Every field is reset from the document when the block id changes (through TextField's effect), so switching
+          block never leaves the previous block's text on screen, even when the two blocks share the same canonical
+          value; TextField also re-synchronises from the document on every value change. */}
       <div className="ed-props-form">
         <TextField
+          resetKey={block.id}
           label={t('props.name')}
           value={block.name}
           disabled={disabled}
           onCommit={(raw) => session.apply(block.kind === 'studio' ? patchStudio(block.id, { name: raw }) : patchBreak(block.id, { name: raw }))}
         />
         <TextField
+          resetKey={block.id}
           label={t('props.duration')}
           value={durationText(block.durationMs)}
           disabled={disabled}
@@ -134,6 +137,7 @@ export function PropertiesPanel() {
         ) : (
           <>
             <TextField
+              resetKey={block.id}
               label={t('props.scene')}
               value={block.scene}
               disabled={disabled}
@@ -146,6 +150,7 @@ export function PropertiesPanel() {
               ))}
             </datalist>
             <TextField
+              resetKey={block.id}
               label={t('props.mediaInput')}
               value={block.mediaInput ?? ''}
               disabled={disabled}
