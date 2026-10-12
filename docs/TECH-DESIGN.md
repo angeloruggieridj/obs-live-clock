@@ -279,15 +279,17 @@ Gli schemi zod sono in `shared/protocol` e vengono validati su entrambi i lati. 
 | `GET/POST/PUT/DELETE /api/formats[/:id]` | CRUD dei format |
 | `POST /api/formats/:id/episodes` | Crea una puntata dal format |
 | `GET/PUT/DELETE /api/episodes[/:id]` | CRUD delle puntate. `PUT` è rifiutato (409) se la puntata è live e bloccata |
-| `POST /api/episodes/:id/import-playlist` | Import da Playlist Deck (live) o da file (body) |
 | `POST /api/episodes/:id/validate` | Errori e avvisi (F6) |
 | `POST /api/obs/check` | Check OBS (F7) |
-| `POST /api/live/load` · `POST /api/live/unload` | Carica o scarica la puntata per la live |
+| `GET /api/live/status` | `{ episodeId, phase }`: stato della puntata per il blocco dell'editor |
+| `POST /api/live/load` · `POST /api/live/unload` | Carica o scarica la puntata per la live. `load` risponde **`409 rundown_invalid`** (con le `issues`) se il rundown ha errori |
 | `GET /api/obs/scenes` | Scene e gruppi, per l'editor |
 | `GET /api/deck/items` | Elementi della playlist corrente, per l'editor |
 | `POST /api/messages/send` · `/clear` | Endpoint pubblico per Stream Deck, Companion e script |
 | `GET/PUT /api/settings` | Impostazioni (credenziali OBS per la modalità remota: solo scrittura, mai restituite) |
 | `POST /api/internal/*` | Solo loopback + bearer: `obs-credentials`, `hotkey`, `screens` |
+
+**L'import avviene nel client:** `GET /api/deck/items` oppure il testo del file letto dal browser e interpretato da `shared/playlist/parse` (JSON, CSV, M3U). Non c'è un endpoint di import lato server.
 
 **[v1.x]** `GET /api/episodes/:id/export`, `POST /api/import`, checkpoint, `GET /api/episodes/:id/markers.csv`.
 
@@ -297,8 +299,8 @@ L'undo/redo dell'editor è **lato client** (stack di comandi sul documento), con
 
 ## 8. Web app
 
-Una build Vite servita dal server stesso dalla cartella `web/dist`. Le entry attuali sono tre —
-`/dock`, `/control` e `/presenter`; l'entry **`/editor`** arriva con il Piano 5.
+Una build Vite servita dal server stesso dalla cartella `web/dist`. Le entry sono quattro —
+`/dock`, `/control`, `/presenter` e **`/editor`** (Piano 5, costruita).
 
 Il server **non** usa `@fastify/static` (tira dentro una dipendenza con licenza BlueOak): ha un
 **gestore statico scritto a mano** (`server/src/api/static.ts`). Serve una `index.html` per pagina
@@ -308,7 +310,12 @@ l'istruzione per eseguirla.
 
 Per lo sviluppo si usa **`pnpm dev`** (simulatore OBS, server e Vite insieme).
 
-- **Editor (Piano 5).** Libreria dei format e delle puntate, timeline orizzontale (dnd-kit) con blocchi proporzionali alla durata, maniglie di ridimensionamento con passo di 5 s, pannello proprietà, collegamento a scene e gruppi da `/api/obs/scenes`, import della playlist, pannello di validazione, Check OBS, undo/redo.
+- **Editor (Piano 5).** Libreria dei format e delle puntate, timeline orizzontale con blocchi proporzionali alla durata, trascinamento **scritto a mano** (pointer event più `timeline/geometry.ts` puro), maniglie di ridimensionamento con passo di 5 s, pannello proprietà, collegamento a scene e gruppi da `/api/obs/scenes`, import della playlist **nel client**, pannello di validazione, Check OBS, undo/redo. La logica sta in tre pezzi puri, separati dalla UI:
+  - `store/document-store.ts` — il documento è un valore immutabile con uno stack di undo/redo limitato; le edit con la stessa `coalesceKey` si fondono in un solo passo;
+  - `store/autosave.ts` — guarda lo store, tiene **una sola** scrittura in volo, salva con debounce in ordine e riprova con backoff, con lo stato di errore/riprova **visibile**;
+  - `session/session.ts` — apre i documenti, unisce store e autosave, gestisce i conflitti e il blocco della live;
+  - la session conserva l'**ultima copia confermata dal server** per accorgersi di una modifica altrui **lato client** (nessun ETag);
+  - i componenti (`EditorApp.tsx` e i pannelli) chiamano solo questi moduli e non parlano mai direttamente col server.
 - **Dock.** Layout verticale a partire da 300 px:
   - stato e blocco corrente;
   - ritardo e fine prevista;

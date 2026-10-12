@@ -252,3 +252,35 @@ La parte TypeScript è organizzata come workspace. Il prodotto ha una sola versi
 - Nel repository vanno aggiunti il file `LICENSE` e le intestazioni SPDX nei sorgenti.
 - Ogni dipendenza deve avere una licenza compatibile con la GPL-2.0-or-later: vanno bene MIT, BSD e ISC. Apache-2.0 è compatibile solo con GPL-3, quindi una dipendenza Apache-2.0 è ammessa soltanto se il prodotto finale viene distribuito sotto GPL-3; ogni caso va verificato.
 - La CI controlla le licenze delle dipendenze.
+
+---
+
+## DT-11 · Editor: drag and drop scritto a mano, rilevamento dei conflitti lato client, import dei file nel client
+
+**Data:** 2026-10-12 · **Stato:** accettata
+
+**Contesto.** L'editor (Piano 5) deve fare tre cose che di solito si demandano a una libreria o al server:
+
+1. **Riordinare e ridimensionare i blocchi della timeline** con mouse e dito, mostrando dove il blocco atterrerà.
+2. **Accorgersi di una modifica fatta altrove** (un'altra scheda o un'altra macchina) e lasciare al regista la scelta tra la copia locale e quella del server.
+3. **Importare una playlist** dal vivo (Playlist Deck) e da un file esportato da Playlist Deck.
+
+**Decisione.**
+
+1. **Drag and drop scritto a mano.** Il trascinamento usa i **pointer event** del browser e un modulo puro (`timeline/geometry.ts`): `dropIndex`, `resizeDuration` (con snap a 5 s) e `layout` sono funzioni pure con test esatti; i gestori del pointer sono poche righe che le chiamano. Il percorso da tastiera chiama le stesse operazioni dello store. Così mouse e dito passano dallo stesso codice e la parte che conta — **dove atterra il blocco** — è verificabile senza layout reale.
+2. **Conflitti rilevati lato client.** La session tiene l'**ultima copia confermata dal server**; su `focus` della finestra e ogni **10 s** rilegge il documento. Se è cambiato e la copia locale è **pulita** la ricarica in silenzio (con un avviso breve); se è **sporca** mostra la banner di conflitto con le due scelte ("usa la versione del server" / "mantieni la mia"). Non c'è un ETag lato server.
+3. **Import nel client.** Il file lo legge il browser (`File.text()`) e lo interpreta `shared/playlist/parse.ts` (puro, testato in Node); la Playlist Deck viva si legge con `GET /api/deck/items`. Il server non ha un endpoint di import.
+
+**L'unico blocco duro lato server resta il `409 episode_live`** (una scrittura su una puntata in onda è rifiutata); il caricamento di un rundown con errori risponde `409 rundown_invalid`.
+
+**Alternative scartate.**
+
+- **`@dnd-kit/core` 6.3.1 (MIT, verificata con `npm view` il 2026-10-12).** È una buona libreria, ma i suoi sensori pointer hanno bisogno di un **layout reale**, che jsdom non ha: la parte che conta — dove il blocco atterra — sarebbe testabile solo dal sensore da tastiera. Scritto a mano, invece, l'indice di rilascio, lo snap e il ridimensionamento sono **funzioni pure** con test esatti e con **zero dipendenze a runtime**.
+- **Un ETag lato server.** Rimandato (fuori dalla v1): aggiungerebbe una versione a ogni documento e a ogni scrittura, mentre l'unico blocco veramente necessario — `409 episode_live` — funziona già. Il rilevamento dei conflitti resta quindi **best-effort lato client**.
+
+**Conseguenze.**
+
+- Nessuna nuova dipendenza **a runtime**: l'unica aggiunta del piano è `@testing-library/user-event` come dev dependency (Task 1).
+- Il percorso **pointer/touch** non è coperto dai test automatici (jsdom non ha layout): si verifica a mano (controllo E2 del piano di test). Residuo nel `BACKLOG`.
+- Una modifica altrui può sfuggire per **fino a 10 s** (finestra del polling). Accettabile con un solo regista in regia; se non bastasse, in v1.x si aggiunge una versione/ETag.
+- I **formati di import** vivono in `shared/` e si testano in Node; il server non legge playlist.

@@ -57,11 +57,26 @@ logica degli `ack` e le guardie in `server/src/api/ws.ts`. Restano:
 
 ## Piano 5 — editor
 
+**Chiusi in questo piano**
+
+- **Id solo minuscoli.** ✅ L'editor genera slug minuscoli e senza nomi riservati di Windows (`web/src/editor/model/ids.ts`).
+- **Puntate con errori di validazione.** ✅ `POST /api/live/load` risponde `409 rundown_invalid` e rifiuta la puntata; anche l'editor blocca il caricamento finché ci sono errori.
+
+**Restano**
+
 - **`list()` non verifica che il nome del file corrisponda a `doc.id`.** Se si copia un file a mano, l'id compare due volte nell'elenco.
-- **`validateRundown`.** Se un id compare 3 o più volte, genera più issue `duplicate_id`: vanno deduplicate.
-- **Id solo minuscoli.** L'editor deve generare slug minuscoli, senza nomi riservati di Windows.
-- **Puntate con errori di validazione.** Decidere se `load` deve rifiutarle (SPEC: "errore nell'editor prima della live").
-- **Errori 400 in `server/src/api/http.ts`.** Il corpo include le `issues` di zod, utili all'editor. Test mancanti: percorsi 500 e messaggi senza puntata.
+- **`validateRundown`: deduplica di `duplicate_id`.** Se un id compare 3 o più volte, il server genera più issue `duplicate_id`: la deduplica resta **lato server** (l'editor deduplica già nella UI, `validation/issues.ts`).
+- **Errori 400 in `server/src/api/http.ts`.** Il corpo include le `issues` di zod. L'editor **non** le usa (prende gli errori da `validateRundown`): restano utili ad altri client. Test mancanti: percorsi 500 e messaggi senza puntata.
+
+**Residui del Piano 5**
+
+- **Nessun ETag lato server.** I conflitti si rilevano **solo lato client** (rilettura su focus e ogni 10 s). L'unico blocco duro lato server è il `409 episode_live`.
+- **La rinomina non cambia mai gli id.** Un documento rinominato conserva lo slug originale; il file su disco resta `<vecchio-id>.json`.
+- **La duplicazione di un blocco perde i media.** `duplicateBlock` copia solo gli elementi `studio`: i servizi importati non vengono duplicati.
+- **Smoke Playwright dell'editor non in CI.** Il Task 16 non è stato eseguito: l'editor non ha test end-to-end.
+- **Il trascinamento touch non è coperto dai test automatici.** jsdom non ha layout reale: il percorso pointer/touch è verificato solo a mano (E2).
+- **`Alt+frecce` può essere intercettato da alcuni browser.** Il default è prevenuto (`preventDefault`), ma dove non basta usare le alternative (Maiusc/Ctrl+freccia) o i pulsanti della toolbar.
+- **Gli errori del Check OBS non bloccano il caricamento.** Basta il secondo clic su "Carica per la live": decisione di prodotto da confermare.
 
 ## Piano 7 — packaging
 
