@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import { mkdir } from 'node:fs/promises';
-import { writeJsonAtomic } from '../persistence/json-file';
+import { PROTOCOL_VERSION } from '@olc/shared';
 import { acquireLock, olcInstanceAlive } from './instance-lock';
 import { dataPaths, defaultDataDir, defaultWebRoot } from './paths';
+import { removeRuntimeFile, writeRuntimeFile } from './runtime-file';
 import { buildServer } from './server';
 import { listenHost, loadSettings } from './settings';
+import { APP_VERSION } from './version';
 
 async function main(): Promise<void> {
   const paths = dataPaths(defaultDataDir());
@@ -17,20 +19,31 @@ async function main(): Promise<void> {
         err instanceof Error ? err.message : String(err),
       ),
     );
-    const { app, instanceId } = await buildServer({
+    const { app, instanceId, kiosk } = await buildServer({
       dataDir: paths.root,
       logger: true,
       lanAccess: settings.lanAccess,
       obsCredentials: settings.obs,
       webRoot: defaultWebRoot(),
+      settings,
     });
     await app.listen({ port: settings.port, host: listenHost(settings) });
-    await writeJsonAtomic(paths.runtime, { port: settings.port, pid: process.pid, instanceId });
+    await writeRuntimeFile(paths.runtime, {
+      port: settings.port,
+      pid: process.pid,
+      instanceId,
+      version: APP_VERSION,
+      protocol: PROTOCOL_VERSION,
+    });
+    if (settings.kiosk.enabled) {
+      kiosk.start().catch((err: unknown) => app.log.error({ error: err instanceof Error ? err.message : String(err) }, 'Kiosk start failed'));
+    }
 
     const shutdown = async (): Promise<void> => {
       try {
         await app.close();
       } finally {
+        await removeRuntimeFile(paths.runtime, instanceId);
         await release();
       }
       process.exit(0);
