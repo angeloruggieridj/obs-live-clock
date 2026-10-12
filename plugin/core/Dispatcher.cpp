@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "Dispatcher.hpp"
 
+#include <string>
 #include <utility>
 
 namespace olc {
 
-Dispatcher::Dispatcher(std::size_t maxQueue) : maxQueue_(maxQueue), thread_([this] { run(); }) {}
+Dispatcher::Dispatcher(std::size_t maxQueue, Log log)
+    : maxQueue_(maxQueue), log_(std::move(log)), thread_([this] { run(); }) {}
 
 Dispatcher::~Dispatcher() { stop(); }
 
@@ -28,13 +30,23 @@ std::size_t Dispatcher::queued() const {
 }
 
 void Dispatcher::stop() {
+    std::size_t discarded = 0;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         stopping_ = true;
+        discarded = queue_.size();
+        dropped_ += discarded;
         queue_.clear();
     }
+    if (discarded != 0 && log_) log_("dispatcher: dropped " + std::to_string(discarded) + " queued job(s) on stop");
     wake_.notify_all();
-    if (thread_.joinable() && thread_.get_id() != std::this_thread::get_id()) thread_.join();
+    if (thread_.joinable()) {
+        if (thread_.get_id() == std::this_thread::get_id()) {
+            thread_.detach();  // stop() from inside a job: never join the current thread
+        } else {
+            thread_.join();
+        }
+    }
 }
 
 void Dispatcher::run() {
