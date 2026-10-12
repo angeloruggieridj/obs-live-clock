@@ -42,6 +42,8 @@ interface FakeConfig {
   deckVersion?: string;
   /** When true the first client fails to connect once, so the connection starts `disconnected`. */
   failFirstConnect?: boolean;
+  /** When true the vendor `GetItems` call never settles, so the deck never completes its first read. */
+  getItemsPending?: boolean;
 }
 
 function configure(obs: FakeObsClient, cfg: FakeConfig): void {
@@ -50,6 +52,7 @@ function configure(obs: FakeObsClient, cfg: FakeConfig): void {
   const deckItems = cfg.deckItems ?? DEFAULT_DECK_ITEMS;
   const deckPresent = cfg.deckPresent ?? true;
   const deckVersion = cfg.deckVersion ?? '1.4.0';
+  const getItemsPending = cfg.getItemsPending ?? false;
   obs.respond('GetSceneList', () => ({ scenes: scenes.map((sceneName) => ({ sceneName })) }));
   obs.respond('GetSceneItemList', (d) => ({ sceneItems: SCENE_ITEMS[String(d?.sceneName)] ?? [] }));
   obs.respond('GetGroupSceneItemList', () => ({ sceneItems: [] }));
@@ -76,6 +79,7 @@ function configure(obs: FakeObsClient, cfg: FakeConfig): void {
       };
     }
     const range = d?.requestData as { from: number; to: number };
+    if (getItemsPending) return new Promise<never>(() => {});
     return { responseData: { ok: true, count: deckItems.length, items: deckItems.slice(range.from, range.to + 1) } };
   });
 }
@@ -216,9 +220,9 @@ describe('GET /api/deck/items', () => {
   });
 
   it('returns 409 deck_not_ready when the deck is present but its items are not read yet', async () => {
-    // Connect without loading an episode first: `DeckPlaylistChanged` is refused, so the items stay unknown
-    // even though the plugin is present.
-    const h = await boot({}, { connect: false });
+    // Connect without loading an episode and with the first item read still pending: the deck is present but has
+    // not produced its items, so the route must answer "come back later" rather than pretend the deck is empty.
+    const h = await boot({ getItemsPending: true }, { connect: false });
     await postCredentials(h);
     const res = await h.app.inject({ method: 'GET', url: '/api/deck/items' });
     expect(res.statusCode).toBe(409);

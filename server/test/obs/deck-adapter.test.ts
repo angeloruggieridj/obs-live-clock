@@ -7,7 +7,7 @@ import { FakeObsClient } from '../support/fake-obs';
 
 const flush = () => new Promise((r) => setImmediate(r));
 
-function setup(version: string | null) {
+function setup(version: string | null, opts: { hasEpisode?: boolean } = {}) {
   const time = new FakeTime();
   const obs = new FakeObsClient();
   const status = {
@@ -35,6 +35,7 @@ function setup(version: string | null) {
     dispatch: (i) => { dispatched.push(i as Record<string, unknown>); return accept; },
     report: (e) => void errors.push(e),
     onSourceChanged: () => void sourceChanges++,
+    hasEpisode: () => opts.hasEpisode ?? true,
   });
   return {
     time, obs, deck, dispatched, errors, status,
@@ -219,6 +220,19 @@ describe('DeckAdapter', () => {
       { index: 1, path: 'D:/media/servizio2.mp4', title: 'Servizio 2', durationMs: -1 },
     ]);
     expect(h.dispatched.filter((d) => d.type === 'DeckPlaylistChanged')).toHaveLength(2);
+  });
+
+  it('serves the latest known items when the engine refuses them because no episode is loaded', async () => {
+    const h = setup('1.4.0', { hasEpisode: false });
+    h.setAccept(false);
+    await h.deck.start();
+    // The engine has nowhere to put the playlist before an episode is loaded, but the editor imports from
+    // the deck while it is preparing the rundown: the items must be served even though the dispatch was refused.
+    expect(h.deck.items()).toEqual([
+      { index: 0, path: 'D:/media/servizio1.mp4', title: 'Servizio 1', durationMs: 185_000 },
+      { index: 1, path: 'D:/media/servizio2.mp4', title: 'Servizio 2', durationMs: -1 },
+    ]);
+    expect(h.dispatched.filter((d) => d.type === 'DeckPlaylistChanged')).toHaveLength(1);
   });
 
   it('resync() clears lastPlayback so the same playback is re-dispatched', async () => {
