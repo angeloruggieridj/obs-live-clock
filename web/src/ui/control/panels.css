@@ -42,3 +42,8 @@ button[aria-pressed='true'] { border-color: var(--fg); font-weight: 700; }
 .confirm-button[data-armed='true'] { border-color: var(--amber); color: var(--amber); }
 .confirm-button[data-danger='true'] { border-color: var(--red); }
 .cmd-feedback { min-height: 1.4em; color: var(--amber); font-weight: 700; }
+
+.hotkey-hint {
+  position: sticky; top: 0; z-index: 5; text-align: center; font-weight: 700; padding: 8px 10px;
+  color: var(--bg); background: var(--amber); border-radius: 6px;
+}

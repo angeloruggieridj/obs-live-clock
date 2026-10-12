@@ -4,6 +4,7 @@ import { ConnectionOverlay } from '../ui/ConnectionOverlay';
 import { Alerts } from '../ui/control/Alerts';
 import { CommandFeedback } from '../ui/control/CommandFeedback';
 import { EmergencyPanel } from '../ui/control/EmergencyPanel';
+import { HotkeyHint } from '../ui/control/HotkeyHint';
 import { MessagePanel } from '../ui/control/MessagePanel';
 import { StatusPanel } from '../ui/control/StatusPanel';
 import { useCommand } from '../ui/control/useCommand';
@@ -11,6 +12,7 @@ import { useObsStatus } from '../ui/control/useObsStatus';
 import { useLive, useSnapshot } from '../ui/live-context';
 import { EpisodePicker } from './EpisodePicker';
 import { EventFeed, useEventFeed } from './EventFeed';
+import { KioskPanel } from './KioskPanel';
 import { RundownTable } from './RundownTable';
 
 const defaultApi = httpApi();
@@ -32,6 +34,7 @@ export function ControlScreen({ api = defaultApi }: { api?: ApiClient }) {
       <header className="c-header">
         <h1 className="label-text">{view === null ? t('noEpisode') : view.episode.name}</h1>
       </header>
+      <HotkeyHint api={api} />
       <main className="c-main">
         <div className="c-rundown">{ready && view !== null ? <RundownTable view={view} run={run} disabled={commandsDisabled} /> : null}</div>
         <div className="c-side">
@@ -50,6 +53,7 @@ export function ControlScreen({ api = defaultApi }: { api?: ApiClient }) {
           <CommandFeedback feedback={feedback} />
           <EventFeed entries={feed} />
           <EpisodePicker api={api} loadedId={view?.episode.id ?? null} />
+          <KioskPanel api={api} />
         </div>
       </main>
       <ConnectionOverlay />

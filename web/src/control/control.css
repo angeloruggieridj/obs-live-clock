@@ -29,3 +29,9 @@
 .episode-list .label-text { flex: 1 1 auto; }
 .episode-date { color: var(--fg-dim); }
 .empty { color: var(--fg-dim); }
+
+.kiosk-row { display: flex; align-items: center; gap: 8px; }
+.kiosk-row select { flex: 1 1 auto; min-width: 0; font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--tile-border); border-radius: 6px; padding: 4px 6px; }
+.kiosk-status { color: var(--fg-dim); font-weight: 700; }
+.kiosk-status[data-state='suspended'], .kiosk-status[data-state='screen_missing'], .kiosk-status[data-state='browser_not_found'], .kiosk-status[data-state='spawn_failed'] { color: var(--amber); }
+.kiosk-actions { display: flex; flex-wrap: wrap; gap: 6px; }
