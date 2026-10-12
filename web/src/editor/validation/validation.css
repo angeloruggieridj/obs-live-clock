@@ -1,0 +1,12 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* The validation region: local problems, the Check OBS panel and the guarded "Load for live". */
+.ed-validation-panel h4 { margin: 8px 0 4px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--fg-off); }
+.ed-validation-panel ul { list-style: none; margin: 0 0 8px; padding: 0; }
+.ed-validation-panel li { margin: 0 0 2px; }
+.ed-issue { display: block; width: 100%; text-align: left; background: none; border: 0; color: inherit; font: inherit; padding: 2px 4px; cursor: pointer; border-radius: 4px; }
+.ed-issue:hover { background: var(--surface); }
+.ed-issue small { color: var(--fg-off); }
+.ed-validation-obs { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--tile-border); }
+.ed-validation-connection { font-weight: 600; }
+.ed-validation-caveat { color: var(--fg-off); font-size: 12px; }
+.ed-validation-load { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--tile-border); }
