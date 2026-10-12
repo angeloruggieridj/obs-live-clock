@@ -1,8 +1,20 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 name: ci
 on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+
+# The plugin jobs follow Playlist Deck's build_project.yml (angeloruggieridj/obs-playlist-deck @ 092baa2): the OBS
+# development tree is built from OBS's own source and prebuilt deps, so the plugin links what OBS ships. Actions of
+# the plugin jobs are pinned to a commit (tag in the trailing comment); the `ts` job is unchanged from Plan 1.
+env:
+  # Keep equal to OBS_VERSION in plugin/scripts/setup-obs-dev.sh.
+  OBS_VERSION: "32.2.2"
+  # What the shipped macOS binary supports; OBS 32.2 itself targets 13.0.
+  MACOS_DEPLOYMENT_TARGET: "13.0"
+
 jobs:
   ts:
     strategy:
@@ -21,3 +33,319 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build
+
+  # Decides whether the plugin jobs run. They are skipped when nothing under plugin/ (or this file) changed, and
+  # always when the repository variable SKIP_PLUGIN_CI is "true" (Settings > Variables). Manual runs always build.
+  changes:
+    permissions:
+      contents: read
+    runs-on: ubuntu-24.04
+    outputs:
+      plugin: ${{ steps.filter.outputs.plugin }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+      - id: filter
+        env:
+          SKIP: ${{ vars.SKIP_PLUGIN_CI }}
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          if [ "$SKIP" = "true" ]; then echo "plugin=false" >> "$GITHUB_OUTPUT"; echo "SKIP_PLUGIN_CI is set"; exit 0; fi
+          base=""
+          if [ "$EVENT" = "pull_request" ]; then base="$PR_BASE"; fi
+          if [ "$EVENT" = "push" ]; then base="$PUSH_BEFORE"; fi
+          if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+            echo "plugin=true" >> "$GITHUB_OUTPUT"; echo "no usable base: building"; exit 0
+          fi
+          if git diff --name-only "$base" HEAD | grep -qE '^(plugin/|\.github/workflows/ci\.yml$)'; then
+            echo "plugin=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "plugin=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # C++ unit tests of the pure core + the Python helpers, on the three platforms. No OBS, no Qt: this is the same
+  # command a developer runs locally (plugin/scripts/verify.sh).
+  plugin-tests:
+    permissions:
+      contents: read
+    name: Plugin unit tests (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.plugin == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022, macos-15]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Build tools (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build libcurl4-openssl-dev
+      - name: Build tools (macOS)
+        if: runner.os == 'macOS'
+        run: brew install cmake ninja
+      - name: C++ unit tests and Python helper tests
+        shell: bash
+        run: bash plugin/scripts/verify.sh
+      # Our browser-panel declarations must list the same virtual functions, in the same order, as obs-browser's
+      # header of the OBS release we build against (and of the newest tag, informationally).
+      - name: Browser panel ABI matches obs-browser
+        if: runner.os == 'Linux'
+        run: python3 plugin/ci/check_browser_panel_abi.py --local plugin/src/BrowserPanel.hpp --obs-tag "$OBS_VERSION"
+      # Linux only: the contract test drives the real C++ core (olc-cli) against a real server.
+      - uses: pnpm/action-setup@v4
+        if: runner.os == 'Linux'
+      - uses: actions/setup-node@v4
+        if: runner.os == 'Linux'
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Plugin <-> server contract (C++ core against the real server)
+        if: runner.os == 'Linux'
+        run: |
+          cli="$(find plugin/build -name olc-cli -type f | head -1)"
+          test -n "$cli" || { echo "::error::olc-cli was not built"; exit 1; }
+          pnpm install --frozen-lockfile
+          OLC_CLI="$GITHUB_WORKSPACE/$cli" pnpm vitest run server/test/contract
+
+  plugin-windows:
+    permissions:
+      contents: read
+    name: Plugin build (Windows x64)
+    needs: [changes, plugin-tests]
+    if: needs.changes.outputs.plugin == 'true'
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      # Qt and the prebuilt deps are OBS's own for OBS_VERSION (read from its CMakePresets.json).
+      - name: Resolve OBS dependencies
+        run: python plugin/ci/obs_deps.py --obs-version "${{ env.OBS_VERSION }}" --platform windows
+      - name: Cache obs-deps
+        id: cache-deps
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: |
+            C:\obs-deps
+            C:\obs-deps-qt6
+          key: olc-obsdeps-win-x64-${{ env.OBS_DEPS_VERSION }}-qt6-${{ env.OBS_QT6_DEPS_VERSION }}-v1
+      - name: Download OBS pre-built deps and Qt
+        if: steps.cache-deps.outputs.cache-hit != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          function Get-Deps($release, $asset, $destination) {
+            $raw = "C:\deps-raw\$asset"
+            New-Item -ItemType Directory -Path $raw, $destination -Force | Out-Null
+            gh release download $release --repo obsproject/obs-deps --pattern "$asset.zip" --dir $raw
+            if ($LASTEXITCODE -ne 0) { throw "could not download $asset.zip from obs-deps $release" }
+            Expand-Archive "$raw\$asset.zip" -DestinationPath "$raw\x"
+            $top = Get-ChildItem "$raw\x"
+            if ($top.Count -eq 1 -and $top[0].PSIsContainer) { $top = Get-ChildItem $top[0].FullName }
+            $top | Move-Item -Destination $destination
+          }
+          Get-Deps $env:OBS_DEPS_VERSION "windows-deps-$env:OBS_DEPS_VERSION-x64" C:\obs-deps
+          Get-Deps $env:OBS_QT6_DEPS_VERSION "windows-deps-qt6-$env:OBS_QT6_DEPS_VERSION-x64" C:\obs-deps-qt6
+      - name: Qt environment
+        shell: powershell
+        run: |
+          "Qt6_DIR=C:\obs-deps-qt6" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "C:\obs-deps-qt6\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Cache OBS dev
+        id: cache-obsdev
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: C:\obs-dev
+          key: olc-obsdev-win-${{ env.OBS_VERSION }}-${{ env.OBS_DEPS_VERSION }}-v1
+      - name: Download OBS source
+        if: steps.cache-obsdev.outputs.cache-hit != 'true'
+        shell: cmd
+        run: |
+          curl -L "https://github.com/obsproject/obs-studio/archive/refs/tags/%OBS_VERSION%.zip" -o obs.zip
+          tar -xf obs.zip -C C:\
+      - name: Configure OBS
+        if: steps.cache-obsdev.outputs.cache-hit != 'true'
+        shell: cmd
+        run: |
+          cmake -B C:\obs-build -S "C:\obs-studio-${{ env.OBS_VERSION }}" -A x64 ^
+            -DENABLE_PLUGINS=OFF ^
+            -DENABLE_CORE_MODULES=OFF ^
+            -DENABLE_SCRIPTING=OFF ^
+            -DENABLE_BROWSER=OFF ^
+            -DENABLE_UPDATER=OFF ^
+            -DCMAKE_SYSTEM_VERSION=10.0 ^
+            -DDepsPath="C:\obs-deps" ^
+            -DFFMPEG_PATH="C:\obs-deps" ^
+            -DQTDIR="%Qt6_DIR%" ^
+            -DCMAKE_PREFIX_PATH="C:\obs-deps;%Qt6_DIR%"
+      - name: Build OBS
+        if: steps.cache-obsdev.outputs.cache-hit != 'true'
+        run: cmake --build C:\obs-build --target obs-frontend-api --config Release --parallel
+      - name: Install OBS dev
+        if: steps.cache-obsdev.outputs.cache-hit != 'true'
+        run: cmake --install C:\obs-build --config Release --component Development --prefix C:\obs-dev
+      - name: Configure plugin
+        shell: cmd
+        run: |
+          cmake -B build -S plugin -A x64 ^
+            -DCMAKE_BUILD_TYPE=Release ^
+            -DBUILD_TESTS=OFF ^
+            -DOLC_EXPECTED_QT=%OBS_QT_ABI% ^
+            -DCMAKE_PREFIX_PATH="C:\obs-dev;%Qt6_DIR%;C:\obs-deps"
+      - name: Build plugin
+        run: cmake --build build --config Release
+      - name: Install plugin (C:\ProgramData\obs-studio\plugins layout, OBS 33 and legacy)
+        run: cmake --install build --config Release --prefix "${{ github.workspace }}\pkg"
+      - name: Check the package
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($f in 'obs-live-clock.dll', 'bin\64bit\obs-live-clock.dll') {
+            if (-not (Test-Path "${{ github.workspace }}\pkg\obs-live-clock\$f")) { throw "missing from the package: obs-live-clock\$f" }
+          }
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: obs-live-clock-plugin-windows
+          path: pkg
+
+  plugin-linux:
+    permissions:
+      contents: read
+    name: Plugin build (Linux x86_64, Ubuntu 24.04)
+    needs: [changes, plugin-tests]
+    if: needs.changes.outputs.plugin == 'true'
+    runs-on: ubuntu-24.04
+    container: ubuntu:24.04
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      # Built against OBS's own .deb (headers and CMake packages under /usr/local), not Ubuntu's libobs-dev: the two
+      # disagree on libobs's soname, and a plugin linked against the wrong one does not load into the real OBS.
+      - name: Install OBS ${{ env.OBS_VERSION }} and build deps
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y curl ca-certificates
+          deb="OBS-Studio-${OBS_VERSION}-Ubuntu-24.04-x86_64.deb"
+          curl -fsSLO "https://github.com/obsproject/obs-studio/releases/download/${OBS_VERSION}/${deb}" \
+            || { echo "::error::OBS ${OBS_VERSION} publishes no ${deb}"; exit 1; }
+          DEBIAN_FRONTEND=noninteractive apt-get install -y "./${deb}" \
+            qt6-base-dev cmake ninja-build g++ pkg-config libsimde-dev libcurl4-openssl-dev
+      - name: Configure
+        run: cmake -B build -S plugin -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF -DCMAKE_PREFIX_PATH="/usr/local;/usr"
+      - name: Build
+        run: cmake --build build
+      - name: Links against OBS's libobs
+        run: |
+          needed="$(objdump -p build/src/obs-live-clock.so | awk '/NEEDED/ && /libobs/ {print $2}')"
+          echo "$needed"
+          echo "$needed" | grep -qx "libobs.so.30" || { echo "::error::expected NEEDED libobs.so.30, got: $needed"; exit 1; }
+      - name: Install (per-user layout, relative to $HOME)
+        run: cmake --install build --prefix "$GITHUB_WORKSPACE/release"
+      - name: Package
+        run: |
+          new=.local/share/obs-studio/plugins/obs-live-clock
+          legacy=.config/obs-studio/plugins/obs-live-clock
+          for f in "$new/obs-live-clock.so" "$legacy/bin/64bit/obs-live-clock.so"; do
+            [ -f "release/$f" ] || { echo "::error::missing from the package: ~/$f"; exit 1; }
+          done
+          tar -czf obs-live-clock-plugin-linux.tar.gz -C "$GITHUB_WORKSPACE/release" "$new" "$legacy"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: obs-live-clock-plugin-linux
+          path: obs-live-clock-plugin-linux.tar.gz
+
+  plugin-macos:
+    permissions:
+      contents: read
+    name: Plugin build (macOS universal)
+    needs: [changes, plugin-tests]
+    if: needs.changes.outputs.plugin == 'true'
+    # OBS 32.2's build refuses an SDK older than macOS 26.5, hence macos-26 (macos-15 ships 15.5).
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Install dependencies
+        run: brew install cmake ninja
+      - name: Resolve OBS dependencies
+        run: python3 plugin/ci/obs_deps.py --obs-version "${{ env.OBS_VERSION }}" --platform macos
+      - name: Cache obs-deps
+        id: cache-deps
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: |
+            /tmp/obs-deps
+            /tmp/obs-deps-qt6
+          key: olc-obsdeps-mac-universal-${{ env.OBS_DEPS_VERSION }}-qt6-${{ env.OBS_QT6_DEPS_VERSION }}-v1
+      - name: Download universal OBS pre-built deps
+        if: steps.cache-deps.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p /tmp/obs-deps /tmp/obs-deps-qt6
+          curl -fsSL \
+            "https://github.com/obsproject/obs-deps/releases/download/${{ env.OBS_DEPS_VERSION }}/macos-deps-${{ env.OBS_DEPS_VERSION }}-universal.tar.xz" \
+            | tar -xJ -C /tmp/obs-deps
+          curl -fsSL \
+            "https://github.com/obsproject/obs-deps/releases/download/${{ env.OBS_QT6_DEPS_VERSION }}/macos-deps-qt6-${{ env.OBS_QT6_DEPS_VERSION }}-universal.tar.xz" \
+            | tar -xJ -C /tmp/obs-deps-qt6
+      - name: Cache OBS dev
+        id: cache-obsdev
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: /tmp/obs-dev
+          key: olc-obsdev-mac-universal-${{ env.OBS_VERSION }}-${{ env.OBS_DEPS_VERSION }}-${{ env.MACOS_DEPLOYMENT_TARGET }}-v1
+      - name: Clone OBS source
+        if: steps.cache-obsdev.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth=1 --branch ${{ env.OBS_VERSION }} https://github.com/obsproject/obs-studio.git /tmp/obs
+          # libobs-metal is a Swift-only target nothing here links; it breaks CMake generate. Drop it.
+          sed -i.bak 's/^\( *\)add_subdirectory(libobs-metal)/\1# disabled for dev build: add_subdirectory(libobs-metal)/' /tmp/obs/CMakeLists.txt
+      - name: Configure OBS (universal)
+        if: steps.cache-obsdev.outputs.cache-hit != 'true'
+        run: |
+          cmake -B /tmp/obs-build -S /tmp/obs \
+            -G Xcode \
+            -DENABLE_PLUGINS=OFF \
+            -DENABLE_CORE_MODULES=OFF \
+            -DENABLE_SCRIPTING=OFF \
+            -DENABLE_BROWSER=OFF \
+            -DENABLE_VLC=OFF \
+            -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET="${{ env.MACOS_DEPLOYMENT_TARGET }}" \
+            -DCMAKE_OSX_SYSROOT="$(xcrun --sdk macosx --show-sdk-path)" \
+            -DCMAKE_PREFIX_PATH="/tmp/obs-deps-qt6;/tmp/obs-deps"
+      - name: Build OBS
+        if: steps.cache-obsdev.outputs.cache-hit != 'true'
+        run: cmake --build /tmp/obs-build --target obs-frontend-api --config Release --parallel
+      - name: Install OBS dev
+        if: steps.cache-obsdev.outputs.cache-hit != 'true'
+        run: cmake --install /tmp/obs-build --config Release --component Development --prefix /tmp/obs-dev
+      - name: Configure plugin (universal)
+        run: |
+          cmake -B build -S plugin \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_TESTS=OFF \
+            -DOLC_EXPECTED_QT="$OBS_QT_ABI" \
+            -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET="${{ env.MACOS_DEPLOYMENT_TARGET }}" \
+            -Dlibobs_DIR="/tmp/obs-dev/Frameworks/libobs.framework/Resources/cmake" \
+            -Dobs-frontend-api_DIR="/tmp/obs-dev/lib/cmake/obs-frontend-api" \
+            -DQt6_DIR="/tmp/obs-deps-qt6/lib/cmake/Qt6" \
+            -DCMAKE_PREFIX_PATH="/tmp/obs-dev;/tmp/obs-deps-qt6;/tmp/obs-deps"
+      - name: Build plugin
+        run: cmake --build build
+      - name: Universal binary check
+        run: |
+          binary="$(find build -name 'obs-live-clock.so' -o -name 'libobs-live-clock.so' | head -1)"
+          test -n "$binary" || { echo "::error::module not found"; find build -maxdepth 3 -type f | head -30; exit 1; }
+          archs="$(lipo -archs "$binary")"
+          echo "archs: $archs"
+          echo "$archs" | grep -q x86_64 && echo "$archs" | grep -q arm64 || { echo "::error::binary is not universal"; exit 1; }
+      - name: Install plugin
+        run: DESTDIR="${{ github.workspace }}/release" cmake --install build
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: obs-live-clock-plugin-macos
+          path: release
