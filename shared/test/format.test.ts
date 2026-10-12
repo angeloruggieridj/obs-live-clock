@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import { describe, expect, it } from 'vitest';
 import { Format, presetForMode, rundownDurationMs } from '../src/index';
+import { MediaElement } from '../src/model/format';
 import { soloFutsalFormat } from '../src/testing/fixtures';
 
 describe('Format schema', () => {
@@ -52,5 +53,18 @@ describe('presetForMode', () => {
 describe('rundownDurationMs', () => {
   it('is the sum of block durations', () => {
     expect(rundownDurationMs(soloFutsalFormat())).toBe(1_620_000);
+  });
+});
+
+describe('MediaElement.durationSource', () => {
+  const base = { id: 'm', kind: 'media', title: 'T', path: 'a.mp4', occurrence: 0, plannedDurationMs: 0 };
+  it('is optional and accepts the five origins', () => {
+    expect(MediaElement.parse(base).durationSource).toBeUndefined();
+    for (const s of ['deck', 'file', 'file_rounded', 'manual', 'unknown']) {
+      expect(MediaElement.parse({ ...base, durationSource: s }).durationSource).toBe(s);
+    }
+  });
+  it('rejects any other origin', () => {
+    expect(MediaElement.safeParse({ ...base, durationSource: 'guess' }).success).toBe(false);
   });
 });

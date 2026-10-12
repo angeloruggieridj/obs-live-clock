@@ -244,3 +244,34 @@ describe('live control', () => {
     expect(h.runtime.presenterView()?.message).toBeNull();
   });
 });
+
+describe('GET /api/live/status', () => {
+  it('reports nothing loaded, then the loaded episode in preshow', async () => {
+    const h = await withEpisode();
+    expect((await h.app.inject({ method: 'GET', url: '/api/live/status' })).json()).toEqual({ episodeId: null, phase: null });
+    await h.app.inject({ method: 'POST', url: '/api/live/load', payload: { episodeId: 'ep-1' } });
+    expect((await h.app.inject({ method: 'GET', url: '/api/live/status' })).json()).toEqual({ episodeId: 'ep-1', phase: 'preshow' });
+  });
+});
+
+describe('POST /api/live/load with an invalid rundown', () => {
+  it('refuses an episode with a validation error and names the issue', async () => {
+    const h = await withEpisode();
+    const ep = (await h.app.inject({ method: 'GET', url: '/api/episodes/ep-1' })).json();
+    ep.blocks[0].elements[1].plannedDurationMs = 9_999_999; // media longer than the block
+    await h.app.inject({ method: 'PUT', url: '/api/episodes/ep-1', payload: ep });
+    const res = await h.app.inject({ method: 'POST', url: '/api/live/load', payload: { episodeId: 'ep-1' } });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error).toBe('rundown_invalid');
+    expect(res.json().issues[0]).toMatchObject({ severity: 'error', code: 'media_exceeds_block', blockId: 'b1' });
+  });
+
+  it('loads an episode that has only warnings', async () => {
+    const h = await withEpisode();
+    const ep = (await h.app.inject({ method: 'GET', url: '/api/episodes/ep-1' })).json();
+    ep.preset.warnMs = 10 * 60_000; // every block now leaves "too little" studio time: warnings only
+    await h.app.inject({ method: 'PUT', url: '/api/episodes/ep-1', payload: ep });
+    const res = await h.app.inject({ method: 'POST', url: '/api/live/load', payload: { episodeId: 'ep-1' } });
+    expect(res.statusCode).toBe(200);
+  });
+});

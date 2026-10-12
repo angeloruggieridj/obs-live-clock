@@ -104,8 +104,8 @@ async function checkIssues(ctx: ObsRoutesContext, episode: Episode): Promise<Iss
   const issues: Issue[] = [];
   const scenes = new Set(ctx.obs.sceneNames() ?? []);
   const groups = new Map(episode.sceneGroups.map((group) => [group.id, group]));
-  // `null` means `GetInputList` failed: media inputs cannot be verified, so they are skipped rather than
-  // reported as missing.
+  // `null` means `GetInputList` failed: media inputs cannot be verified, so they are reported as unverified
+  // rather than as missing.
   const inputs = await readInputs(ctx);
 
   for (const block of episode.blocks) {
@@ -116,6 +116,14 @@ async function checkIssues(ctx: ObsRoutesContext, episode: Episode): Promise<Iss
           code: 'scene_missing',
           blockId: block.id,
           message: `Scene "${block.scene}" is not in OBS`,
+        });
+      }
+      if (block.mediaInput !== null && inputs === null) {
+        issues.push({
+          severity: 'warning',
+          code: 'media_input_unverified',
+          blockId: block.id,
+          message: `Media input "${block.mediaInput}" could not be verified`,
         });
       }
       if (block.mediaInput !== null && inputs !== null && !inputs.has(block.mediaInput)) {

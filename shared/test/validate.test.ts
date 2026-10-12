@@ -50,6 +50,18 @@ describe('validateRundown', () => {
     const issue = validateRundown(f).find((i) => i.code === 'studio_below_threshold');
     expect(issue).toMatchObject({ severity: 'warning', blockId: 'b1' });
   });
+
+  it('warns about a media element whose duration is unknown, on its block', () => {
+    const f = soloFutsalFormat();
+    const b = f.blocks[0] as StudioBlock;
+    b.elements = b.elements.map((e) => (e.kind === 'media' ? { ...e, plannedDurationMs: 0, durationSource: 'unknown' as const } : e));
+    const issue = validateRundown(f).find((i) => i.code === 'media_duration_unknown');
+    expect(issue).toMatchObject({ severity: 'warning', blockId: 'b1' });
+  });
+
+  it('does not warn when the origin is absent or known', () => {
+    expect(validateRundown(soloFutsalFormat()).some((i) => i.code === 'media_duration_unknown')).toBe(false);
+  });
 });
 
 describe('plannedStudioTimeMs', () => {
