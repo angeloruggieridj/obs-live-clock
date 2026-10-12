@@ -1,0 +1,168 @@
+{
+  "_comment": "Contract between plugin/ (C++) and server/ (TypeScript). Both test suites read this file; change it only together with both sides.",
+  "protocol": 1,
+  "health": {
+    "version": "0.1.0",
+    "protocol": 1,
+    "instanceId": "00000000-0000-4000-8000-000000000000"
+  },
+  "runtimeJson": {
+    "port": 4460,
+    "pid": 1234,
+    "instanceId": "00000000-0000-4000-8000-000000000000"
+  },
+  "dataDirVectors": [
+    {
+      "platform": "win32",
+      "env": {
+        "APPDATA": "C:/Users/ann/AppData/Roaming"
+      },
+      "home": "C:/Users/ann",
+      "expected": "C:/Users/ann/AppData/Roaming/obs-live-clock"
+    },
+    {
+      "platform": "win32",
+      "env": {},
+      "home": "C:/Users/ann",
+      "expected": "C:/Users/ann/AppData/Roaming/obs-live-clock"
+    },
+    {
+      "platform": "darwin",
+      "env": {},
+      "home": "/Users/ann",
+      "expected": "/Users/ann/Library/Application Support/obs-live-clock"
+    },
+    {
+      "platform": "linux",
+      "env": {},
+      "home": "/home/ann",
+      "expected": "/home/ann/.config/obs-live-clock"
+    },
+    {
+      "platform": "linux",
+      "env": {
+        "XDG_CONFIG_HOME": "/xdg"
+      },
+      "home": "/home/ann",
+      "expected": "/xdg/obs-live-clock"
+    },
+    {
+      "platform": "linux",
+      "env": {
+        "OLC_DATA_DIR": "/data/olc"
+      },
+      "home": "/home/ann",
+      "expected": "/data/olc"
+    }
+  ],
+  "slots": [
+    {
+      "id": "message-1",
+      "obsName": "obs-live-clock.message.1",
+      "description": "OBS Live Clock: Messaggio 1",
+      "emergency": false
+    },
+    {
+      "id": "message-2",
+      "obsName": "obs-live-clock.message.2",
+      "description": "OBS Live Clock: Messaggio 2",
+      "emergency": false
+    },
+    {
+      "id": "message-3",
+      "obsName": "obs-live-clock.message.3",
+      "description": "OBS Live Clock: Messaggio 3",
+      "emergency": false
+    },
+    {
+      "id": "message-4",
+      "obsName": "obs-live-clock.message.4",
+      "description": "OBS Live Clock: Messaggio 4",
+      "emergency": false
+    },
+    {
+      "id": "message-5",
+      "obsName": "obs-live-clock.message.5",
+      "description": "OBS Live Clock: Messaggio 5",
+      "emergency": false
+    },
+    {
+      "id": "message-6",
+      "obsName": "obs-live-clock.message.6",
+      "description": "OBS Live Clock: Messaggio 6",
+      "emergency": false
+    },
+    {
+      "id": "message-7",
+      "obsName": "obs-live-clock.message.7",
+      "description": "OBS Live Clock: Messaggio 7",
+      "emergency": false
+    },
+    {
+      "id": "message-8",
+      "obsName": "obs-live-clock.message.8",
+      "description": "OBS Live Clock: Messaggio 8",
+      "emergency": false
+    },
+    {
+      "id": "message-9",
+      "obsName": "obs-live-clock.message.9",
+      "description": "OBS Live Clock: Messaggio 9",
+      "emergency": false
+    },
+    {
+      "id": "message-10",
+      "obsName": "obs-live-clock.message.10",
+      "description": "OBS Live Clock: Messaggio 10",
+      "emergency": false
+    },
+    {
+      "id": "message-11",
+      "obsName": "obs-live-clock.message.11",
+      "description": "OBS Live Clock: Messaggio 11",
+      "emergency": false
+    },
+    {
+      "id": "message-12",
+      "obsName": "obs-live-clock.message.12",
+      "description": "OBS Live Clock: Messaggio 12",
+      "emergency": false
+    },
+    {
+      "id": "clear",
+      "obsName": "obs-live-clock.clear",
+      "description": "OBS Live Clock: CLEAR",
+      "emergency": false
+    },
+    {
+      "id": "next",
+      "obsName": "obs-live-clock.next",
+      "description": "OBS Live Clock: NEXT",
+      "emergency": true
+    },
+    {
+      "id": "prev",
+      "obsName": "obs-live-clock.prev",
+      "description": "OBS Live Clock: PREV",
+      "emergency": true
+    },
+    {
+      "id": "time-plus",
+      "obsName": "obs-live-clock.time.plus",
+      "description": "OBS Live Clock: +tempo",
+      "emergency": true
+    },
+    {
+      "id": "time-minus",
+      "obsName": "obs-live-clock.time.minus",
+      "description": "OBS Live Clock: -tempo",
+      "emergency": true
+    },
+    {
+      "id": "control-toggle",
+      "obsName": "obs-live-clock.control.toggle",
+      "description": "OBS Live Clock: MANUALE/AUTO",
+      "emergency": true
+    }
+  ]
+}
