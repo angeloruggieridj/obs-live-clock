@@ -73,7 +73,7 @@ async function seedWhenReady() {
   const seed = spawn('pnpm', ['--filter', '@olc/server', 'seed:dev'], { cwd: root, shell: isWindows, stdio: 'inherit' });
   seed.on('exit', (code) => {
     if (code !== 0) console.log(`[dev] seed failed (${code})`);
-    console.log('[dev] presenter http://localhost:5173/presenter · dock http://localhost:5173/dock · control http://localhost:5173/control');
+    console.log('[dev] presenter http://localhost:5173/presenter · dock http://localhost:5173/dock · control http://localhost:5173/control · editor http://localhost:5173/editor');
   });
 }
 void seedWhenReady();

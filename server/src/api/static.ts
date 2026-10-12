@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { extname, join } from 'node:path';
 import type { FastifyInstance, FastifyReply } from 'fastify';
 
-export const WEB_PAGES = ['presenter', 'dock', 'control'] as const;
+export const WEB_PAGES = ['presenter', 'dock', 'control', 'editor'] as const;
 
 const ASSET_NAME = /^[A-Za-z0-9_][A-Za-z0-9._-]*$/;
 /** Windows reserved device names: a valid asset name on paper, but not a real file on the build host. */

@@ -5,7 +5,7 @@ import react from '@vitejs/plugin-react';
 import { defineConfig, type Plugin } from 'vite';
 
 const root = fileURLToPath(new URL('.', import.meta.url));
-const PAGES = ['presenter', 'dock', 'control'] as const;
+const PAGES = ['presenter', 'dock', 'control', 'editor'] as const;
 const SERVER = process.env.OLC_SERVER ?? 'http://127.0.0.1:4460';
 
 /** Dev only: answer /presenter like /presenter/ (Vite's MPA fallback needs the slash; the real server serves both). */
@@ -14,7 +14,7 @@ function pageWithoutSlash(): Plugin {
     name: 'olc-page-without-slash',
     configureServer(server) {
       server.middlewares.use((req, _res, next) => {
-        const m = req.url === undefined ? null : /^\/(presenter|dock|control)(\?.*)?$/.exec(req.url);
+        const m = req.url === undefined ? null : /^\/(presenter|dock|control|editor)(\?.*)?$/.exec(req.url);
         if (m !== null) req.url = `/${m[1]}/${m[2] ?? ''}`;
         next();
       });
