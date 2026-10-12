@@ -83,3 +83,32 @@ logica degli `ack` e le guardie in `server/src/api/ws.ts`. Restano:
 - **±tempo su un blocco.** Oggi viene recuperato sul blocco elastico successivo e non sposta la fine del programma (`plannedStartAt` ignora `adjustMs`).
 - **Blocchi di studio consecutivi sulle stesse camere.** Si passa dall'uno all'altro a tempo, e il nuovo blocco è "planned". Uno sforamento voluto si vede quindi come accorciamento del blocco successivo.
 - **Log della live su più sessioni della stessa puntata.** Prova del pomeriggio e diretta della sera finiscono nello stesso file. Valutare un marcatore di sessione o la rotazione del file.
+
+## Residui del Piano 4 (accettati, minori)
+
+**Client web e server**
+
+- `pushViews` in `server/src/api/ws.ts` registra `lastView`/`lastRev` prima che l'invio riesca. Una riconnessione azzera entrambi.
+- Nel client, il campo `problem` dello snapshot non viene mai azzerato e nessuna UI lo mostra.
+- Il ciclo di aggiornamento dei contatori scrive un `console.error` fino a 60 volte al secondo se un abbonato continua a lanciare.
+- Manca un test con StrictMode.
+- L'isteresi su un contatore in pausa può differire fino a 250 ms tra due schermi.
+- I file del modello `mainAnchor` e `showSide` non hanno un controllo di esaustività.
+- `defaultWebRoot` dipende dalla struttura dei sorgenti: un server impacchettato richiede `OLC_WEB_ROOT` (Piano 7).
+
+**Dock**
+
+- Il polling dello stato OBS non ha abort e sfarfalla a un singolo errore.
+- Il messaggio libero può duplicarsi dopo un `ack` perso.
+- Il tally del dock non ha lo stato "imminente".
+
+**Test di integrazione**
+
+- Il controllo negativo sul presenter al passo 4 può passare senza provare nulla.
+- L'attesa dello stato non aggiornato al passo 8 consente 6 s, mentre il brief ne prevede circa 2,3.
+- Il timeout dei test è stato portato a 15 s (era 5 s) perché quattro esecuzioni in parallelo mandavano in timeout tre test del server. Da riconsiderare se la CI diventa lenta.
+
+**Verifiche visive non ancora fatte**
+
+- Il Task 16 (Playwright) è stato saltato per scelta. Va eseguito prima del primo test su una TV vera.
+- I controlli su TV e AC10 (cifre del contatore ≥ 20% dell'altezza) non sono stati fatti in un browser reale. Le misure del piano sono state prese su schermate a 1080p e 4:3.
