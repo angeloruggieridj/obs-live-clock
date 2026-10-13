@@ -53,7 +53,7 @@ TEST_CASE("post() returns at once even while a job blocks (the OBS thread must n
     std::atomic<bool> started{false};
     d.post([&] {
         started = true;
-        gate.wait();  // a hung HTTP call
+        gate.wait_for(std::chrono::hours(24));  // a hung HTTP call, capped like every wait
     });
     REQUIRE(waitFor([&] { return started.load(); }));
     const auto t0 = std::chrono::steady_clock::now();
@@ -61,6 +61,7 @@ TEST_CASE("post() returns at once even while a job blocks (the OBS thread must n
     const auto spent = std::chrono::steady_clock::now() - t0;
     CHECK(spent < 100ms);
     release.set_value();
+    d.stop();  // join the worker before `gate`/`release` die: libc++ aborts on a freed wait
 }
 
 TEST_CASE("a full queue drops new jobs and counts them instead of growing without bound") {
@@ -70,7 +71,7 @@ TEST_CASE("a full queue drops new jobs and counts them instead of growing withou
     std::atomic<bool> started{false};
     d.post([&] {
         started = true;
-        gate.wait();
+        gate.wait_for(std::chrono::hours(24));
     });
     REQUIRE(waitFor([&] { return started.load(); }));
     CHECK(d.post([] {}));
@@ -78,6 +79,7 @@ TEST_CASE("a full queue drops new jobs and counts them instead of growing withou
     CHECK_FALSE(d.post([] {}));
     CHECK(d.dropped() == 1);
     release.set_value();
+    d.stop();  // join the worker before `gate`/`release` die: libc++ aborts on a freed wait
 }
 
 TEST_CASE("a throwing job does not kill the worker") {

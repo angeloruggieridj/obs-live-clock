@@ -105,7 +105,7 @@ TEST_CASE("onPress returns immediately while the app hangs, and presses are sent
     std::atomic<int> inFlight{0};
     http.setHandler([&](const HttpRequest&) {
         ++inFlight;
-        gate.wait();  // the app is hung: every request would block until released
+        gate.wait_for(std::chrono::hours(24));  // the app is hung: every request would block until released
         return reply(200);
     });
     ApiClient api(http, "http://127.0.0.1:4460", [] { return std::string("tok"); });
@@ -219,7 +219,7 @@ TEST_CASE("a press that waited more than 2 s behind a hung request is dropped, n
     std::atomic<int> inFlight{0};
     http.setHandler([&](const HttpRequest&) {
         ++inFlight;
-        gate.wait();  // the app is hung
+        gate.wait_for(std::chrono::hours(24));  // the app is hung
         return reply(200);
     });
     ApiClient api(http, "http://127.0.0.1:4460", [] { return std::string("tok"); });
@@ -260,7 +260,7 @@ TEST_CASE("a press that waited no more than 2 s is still sent exactly once") {
     std::atomic<int> inFlight{0};
     http.setHandler([&](const HttpRequest&) {
         ++inFlight;
-        gate.wait();
+        gate.wait_for(std::chrono::hours(24));
         return reply(200);
     });
     ApiClient api(http, "http://127.0.0.1:4460", [] { return std::string("tok"); });
