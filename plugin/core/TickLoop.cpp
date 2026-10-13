@@ -3,6 +3,8 @@
 
 #include <utility>
 
+#include "Waits.hpp"
+
 namespace olc {
 
 TickLoop::TickLoop(std::function<void()> tick, std::chrono::milliseconds period)
@@ -35,7 +37,8 @@ void TickLoop::run() {
         const auto now = std::chrono::steady_clock::now();
         if (next < now) next = now;  // we fell behind: do not burst to catch up
         std::unique_lock<std::mutex> lock(mutex_);
-        if (wake_.wait_until(lock, next, [this] { return stopping_; })) return;
+        // Capped so a very long period can never hand libc++ a deadline it converts to a huge system time.
+        if (wake_.wait_until(lock, cappedDeadline(next), [this] { return stopping_; })) return;
     }
 }
 

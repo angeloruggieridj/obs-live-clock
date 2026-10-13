@@ -4,6 +4,8 @@
 #include <string>
 #include <utility>
 
+#include "Waits.hpp"
+
 namespace olc {
 
 Dispatcher::Dispatcher(std::size_t maxQueue, Log log)
@@ -54,7 +56,9 @@ void Dispatcher::run() {
         std::function<void()> job;
         {
             std::unique_lock<std::mutex> lock(mutex_);
-            wake_.wait(lock, [this] { return stopping_ || !queue_.empty(); });
+            // Bounded, never unbounded: libc++ on macOS throws system_error(EINVAL) from an unending
+            // condition_variable wait. Re-checking the predicate after each chunk behaves exactly like wait().
+            while (!stopping_ && queue_.empty()) wake_.wait_for(lock, maxWait);
             if (stopping_) return;
             job = std::move(queue_.front());
             queue_.pop_front();
